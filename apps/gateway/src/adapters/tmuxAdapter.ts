@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PaneContext, TerminalAdapter } from "../types.js";
+import type { PaneContext, PaneSnapshot, TerminalAdapter } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +52,34 @@ export class TmuxAdapter implements TerminalAdapter {
       cwd: cwdRes.stdout.trim(),
       shell: shellRes.stdout.trim()
     };
+  }
+
+  async listPanes(sessionId: string): Promise<PaneSnapshot[]> {
+    const clean = sanitizeSessionId(sessionId);
+    const format = [
+      "#{pane_id}",
+      "#{pane_index}",
+      "#{?pane_active,1,0}",
+      "#{pane_title}",
+      "#{pane_current_path}",
+      "#{pane_current_command}"
+    ].join("\u001f");
+    const { stdout } = await execFileAsync(this.tmuxBin, ["list-panes", "-t", clean, "-F", format]);
+
+    return stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [id, indexRaw, activeRaw, title, currentPath, currentCommand] = line.split("\u001f");
+        return {
+          id: id ?? "",
+          index: Number.parseInt(indexRaw ?? "0", 10) || 0,
+          active: activeRaw === "1",
+          title: title ?? "",
+          currentPath: currentPath ?? "",
+          currentCommand: currentCommand ?? ""
+        };
+      });
   }
 
   async ensureSessionExists(sessionId: string): Promise<boolean> {

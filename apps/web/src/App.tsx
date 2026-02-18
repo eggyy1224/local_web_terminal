@@ -8,8 +8,29 @@ const STORAGE_SESSION_KEY = "local-web-terminal:session";
 
 interface SidecarPayload {
   sessionId: string | null;
-  context: SessionContext | null;
+  context: SessionContext;
   updatedAt: number;
+}
+
+function serializeSnapshot(payload: SidecarPayload): string {
+  return JSON.stringify(payload).replace(/</g, "\\u003c");
+}
+
+function createEmptyContext(): SessionContext {
+  return {
+    timestamp: 0,
+    sessionId: "",
+    cwd: "",
+    repoRoot: "",
+    branch: "",
+    gitStatusPorcelain: "",
+    diffStat: "",
+    recentErrors: [],
+    tmuxPanes: [],
+    shell: "",
+    recentOutput: [],
+    lastCommands: []
+  };
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -39,9 +60,10 @@ export function App() {
 
   const [sidecar, setSidecar] = useState<SidecarPayload>({
     sessionId: null,
-    context: null,
+    context: createEmptyContext(),
     updatedAt: Date.now()
   });
+  const serializedSidecar = serializeSnapshot(sidecar);
 
   useEffect(() => {
     if (!terminalNodeRef.current || terminalRef.current) {
@@ -80,7 +102,10 @@ export function App() {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
         setSidecar({
           sessionId,
-          context,
+          context: {
+            ...createEmptyContext(),
+            ...context
+          },
           updatedAt: Date.now()
         });
       } catch {
@@ -144,13 +169,21 @@ export function App() {
       }
 
       sessionIdRef.current = sessionId;
-      setSidecar((prev) => ({ ...prev, sessionId, updatedAt: Date.now() }));
+      setSidecar((prev) => ({
+        ...prev,
+        sessionId,
+        context: {
+          ...prev.context,
+          sessionId
+        },
+        updatedAt: Date.now()
+      }));
       connectWs(sessionId);
       await refreshContext();
 
       contextTimerRef.current = window.setInterval(() => {
         void refreshContext();
-      }, 1500);
+      }, 10000);
     };
 
     const onResize = () => {
@@ -192,9 +225,15 @@ export function App() {
     <div className="terminal-only">
       <div ref={terminalNodeRef} className="terminal-root" />
       <script
+        id="snapshot-json"
+        type="application/json"
+        dangerouslySetInnerHTML={{ __html: serializedSidecar }}
+      />
+      <script
         id="ai-context-sidecar"
         type="application/json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(sidecar) }}
+        data-alias-for="snapshot-json"
+        dangerouslySetInnerHTML={{ __html: serializedSidecar }}
       />
     </div>
   );

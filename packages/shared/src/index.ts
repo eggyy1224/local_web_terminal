@@ -1,6 +1,22 @@
+export interface TmuxPaneSnapshot {
+  id: string;
+  index: number;
+  title: string;
+  active: boolean;
+  currentPath: string;
+  currentCommand: string;
+}
+
 export interface SessionContext {
+  timestamp: number;
   sessionId: string;
   cwd: string;
+  repoRoot: string;
+  branch: string;
+  gitStatusPorcelain: string;
+  diffStat: string;
+  recentErrors: string[];
+  tmuxPanes: TmuxPaneSnapshot[];
   shell: string;
   recentOutput: string[];
   lastCommands: string[];

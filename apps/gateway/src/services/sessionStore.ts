@@ -1,6 +1,7 @@
 import type { SessionContext } from "@local-terminal/shared";
 import { maskSensitive } from "@local-terminal/security";
 import type { SessionState } from "../types.js";
+import { extractRecentErrors } from "./contextCollector.js";
 
 const MAX_OUTPUT_CHUNKS = 400;
 const MAX_COMMANDS = 80;
@@ -85,11 +86,21 @@ export class SessionStore {
       return null;
     }
 
+    const recentOutput = state.outputChunks.slice(-50).map((chunk) => maskSensitive(chunk));
+    const recentErrors = extractRecentErrors(recentOutput);
+
     return {
+      timestamp: Date.now(),
       sessionId,
       cwd: state.cwd,
+      repoRoot: "",
+      branch: "",
+      gitStatusPorcelain: "",
+      diffStat: "",
+      recentErrors,
+      tmuxPanes: [],
       shell: state.shell,
-      recentOutput: state.outputChunks.slice(-50).map((chunk) => maskSensitive(chunk)),
+      recentOutput,
       lastCommands: state.lastCommands.slice(-20)
     };
   }

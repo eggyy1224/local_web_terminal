@@ -8,7 +8,7 @@ The UI is intentionally minimal: one full-screen terminal with a read-only AI co
 - Single full-screen browser terminal (xterm.js)
 - tmux-backed local shell session attach
 - WebSocket shell streaming (`stdin` / `resize`)
-- Read-only context sidecar for AI (`#ai-context-sidecar`)
+- Read-only context sidecar for AI (`#snapshot-json`, alias: `#ai-context-sidecar`)
 - Sensitive output masking
 - Local-only security model (`127.0.0.1` + loopback origin allow)
 - No disk persistence for session context
@@ -48,6 +48,21 @@ This repo includes a `postinstall` hook that applies `chmod +x` automatically.
 - `GET /api/context/:id`
 - `GET /api/health`
 - `WS /ws/sessions/:id/stream`
+
+## Snapshot Contract
+
+- Primary hidden snapshot node: `script#snapshot-json[type="application/json"]`
+- Backward-compatible alias: `script#ai-context-sidecar[type="application/json"]`
+- Refresh cadence: every `10` seconds
+- Required context fields:
+  - `timestamp`
+  - `cwd`
+  - `repoRoot`
+  - `branch`
+  - `gitStatusPorcelain`
+  - `diffStat`
+  - `recentErrors`
+  - `tmuxPanes`
 
 ## Breaking Changes
 

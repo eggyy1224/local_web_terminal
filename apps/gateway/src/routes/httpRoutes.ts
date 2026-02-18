@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { collectGitSnapshot } from "../services/contextCollector.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import type { TerminalAdapter } from "../types.js";
 
@@ -39,12 +40,20 @@ export async function registerHttpRoutes(
     }
 
     deps.store.ensure(params.sessionId);
-    const paneContext = await deps.adapter.getPaneContext(params.sessionId);
 
-    deps.store.setContext(params.sessionId, {
-      cwd: paneContext.cwd,
-      shell: paneContext.shell
-    });
+    let paneCwd: string | null = null;
+    let paneShell: string | null = null;
+    try {
+      const paneContext = await deps.adapter.getPaneContext(params.sessionId);
+      paneCwd = paneContext.cwd || null;
+      paneShell = paneContext.shell || null;
+      deps.store.setContext(params.sessionId, {
+        cwd: paneContext.cwd || process.cwd(),
+        shell: paneContext.shell || ""
+      });
+    } catch {
+      // Keep context endpoint available even when tmux context lookup fails.
+    }
 
     const context = deps.store.getContext(params.sessionId);
     if (!context) {
@@ -52,6 +61,23 @@ export async function registerHttpRoutes(
       return;
     }
 
-    reply.send(context);
+    const cwd = paneCwd ?? context.cwd ?? process.cwd();
+    const shell = paneShell ?? context.shell ?? "";
+    const [gitSnapshot, tmuxPanes] = await Promise.all([
+      collectGitSnapshot(cwd),
+      deps.adapter.listPanes(params.sessionId).catch(() => [])
+    ]);
+
+    reply.send({
+      ...context,
+      timestamp: Date.now(),
+      cwd,
+      shell,
+      repoRoot: gitSnapshot.repoRoot,
+      branch: gitSnapshot.branch,
+      gitStatusPorcelain: gitSnapshot.gitStatusPorcelain,
+      diffStat: gitSnapshot.diffStat,
+      tmuxPanes
+    });
   });
 }
