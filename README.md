@@ -1,15 +1,16 @@
-# Local Web Terminal (iTerm2-like)
+# Local Web Terminal (Terminal-only)
 
-A local-first web terminal that runs on macOS and connects to your local shell environment via tmux + PTY. The UI is browser-hosted and exposes a structured sidecar context for AI collaboration.
+A local-first web terminal for macOS that connects to your local shell via tmux + PTY.
+The UI is intentionally minimal: one full-screen terminal with a read-only AI context sidecar.
 
 ## Features
 
-- Browser terminal with xterm.js
-- tmux-backed tabs and pane splits
-- WebSocket shell streaming
-- AI command proposal -> human confirm -> execute
+- Single full-screen browser terminal (xterm.js)
+- tmux-backed local shell session attach
+- WebSocket shell streaming (`stdin` / `resize`)
+- Read-only context sidecar for AI (`#ai-context-sidecar`)
 - Sensitive output masking
-- Local-only security model (`127.0.0.1` + Origin allowlist)
+- Local-only security model (`127.0.0.1` + loopback origin allow)
 - No disk persistence for session context
 
 ## Prerequisites
@@ -44,30 +45,23 @@ This repo includes a `postinstall` hook that applies `chmod +x` automatically.
 ## APIs
 
 - `POST /api/sessions`
-- `POST /api/sessions/:id/tabs`
-- `POST /api/sessions/:id/panes/split`
-- `POST /api/commands/propose`
-- `POST /api/commands/:proposalId/confirm`
 - `GET /api/context/:id`
-- `GET /api/sessions/:id/topology`
 - `GET /api/health`
 - `WS /ws/sessions/:id/stream`
 
+## Breaking Changes
+
+The following endpoints were removed:
+
+- `POST /api/sessions/:id/tabs`
+- `POST /api/sessions/:id/panes/split`
+- `GET /api/sessions/:id/topology`
+- `POST /api/sessions/:id/focus-pane`
+- `POST /api/commands/propose`
+- `POST /api/commands/:proposalId/confirm`
+
 ## Security Notes
 
-This project intentionally does not use auth tokens. To reduce abuse surface:
-
 - Gateway binds only `127.0.0.1`
-- CORS/Origin allowlist is enforced
-- AI cannot execute commands without explicit confirm
-- Explicit delete commands (`rm`, `rmdir`, `unlink`) are marked risky
-
-## Current parity stage
-
-Implemented: Phase A base with substantial Phase B scaffolding.
-
-- tabs/panes/splits
-- reconnect flow
-- shortcut mappings (`Cmd+T`, `Cmd+D`, `Cmd+Shift+D`, `Cmd+F`)
-- AI proposal/confirm panel
-- context sidecar JSON (`#ai-context-sidecar`)
+- CORS/Origin allow is restricted to loopback origins
+- AI context is read-only; no command execution API is exposed

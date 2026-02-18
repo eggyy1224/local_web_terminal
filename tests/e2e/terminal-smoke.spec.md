@@ -1,8 +1,7 @@
 # E2E Smoke (Playwright placeholder)
 
-1. Open web app and verify terminal canvas appears.
-2. Create a new session and run `pwd`.
-3. Split pane horizontally and run `echo split_ok`.
-4. Trigger AI propose with `ls -la`; confirm and verify output appears.
-5. Trigger AI propose with `rm -rf ./tmp`; verify risk flag shown.
-6. Reload page and verify session reconnects.
+1. Open web app and verify only terminal is rendered.
+2. Create or resume a session and run `pwd`.
+3. Verify command output appears in terminal stream.
+4. Verify sidecar exists and includes `sessionId`, `cwd`, `shell`, `recentOutput`, `lastCommands`.
+5. Reload page and verify reconnect behavior still works.
