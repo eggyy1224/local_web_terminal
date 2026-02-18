@@ -1,0 +1,23 @@
+{
+  "name": "local-web-terminal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty-helper-perms.mjs",
+    "dev": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && concurrently -n shared,security,gateway,web \"npm run dev -w @local-terminal/shared\" \"npm run dev -w @local-terminal/security\" \"npm run dev -w @local-terminal/gateway\" \"npm run dev -w @local-terminal/web\"",
+    "build": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && npm run build -w @local-terminal/gateway && npm run build -w @local-terminal/web",
+    "test": "npm run test -w @local-terminal/shared && npm run test -w @local-terminal/security && npm run test -w @local-terminal/gateway && npm run test -w @local-terminal/web",
+    "lint": "npm run lint -w @local-terminal/shared && npm run lint -w @local-terminal/security && npm run lint -w @local-terminal/gateway && npm run lint -w @local-terminal/web",
+    "typecheck": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && npm run typecheck -w @local-terminal/gateway && npm run typecheck -w @local-terminal/web && npm run typecheck -w @local-terminal/security && npm run typecheck -w @local-terminal/shared"
+  },
+  "devDependencies": {
+    "@esbuild/darwin-arm64": "^0.27.3",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.8.2"
+  }
+}
