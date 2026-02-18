@@ -7,6 +7,33 @@ export interface TmuxPaneSnapshot {
   currentCommand: string;
 }
 
+export type WorkspaceKind = "git_repo_root" | "git_repo_subdir" | "plain_dir" | "unknown";
+
+export interface PaneGitSnapshot {
+  branch: string;
+  isDirty: boolean;
+  summary: string | Record<string, unknown>;
+}
+
+export interface TwoPaneView {
+  id: string;
+  isActive: boolean;
+  title?: string;
+  cwd?: string;
+  lines: string[];
+  role: "codex" | "workspace";
+  errors?: string[];
+  workspaceKind?: WorkspaceKind;
+  repoRoot?: string;
+  gitSnapshot?: PaneGitSnapshot | null;
+}
+
+export interface TwoPaneSnapshot {
+  activePaneId: string;
+  codex: TwoPaneView;
+  workspace: TwoPaneView;
+}
+
 export interface SessionContext {
   timestamp: number;
   sessionId: string;
@@ -20,6 +47,7 @@ export interface SessionContext {
   shell: string;
   recentOutput: string[];
   lastCommands: string[];
+  twoPane: TwoPaneSnapshot;
 }
 
 export interface WsClientMessage {

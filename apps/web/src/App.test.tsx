@@ -42,6 +42,13 @@ describe("App snapshot sidecar", () => {
     expect(parsed).toHaveProperty("sessionId");
     expect(parsed).toHaveProperty("context");
     expect(parsed).toHaveProperty("updatedAt");
+    const context = parsed.context as Record<string, unknown>;
+    const twoPane = context.twoPane as Record<string, unknown>;
+    expect(twoPane).toBeTruthy();
+    const codex = twoPane.codex as Record<string, unknown>;
+    const workspace = twoPane.workspace as Record<string, unknown>;
+    expect(Array.isArray(codex.lines)).toBe(true);
+    expect(Array.isArray(workspace.lines)).toBe(true);
   });
 
   it("does not add visible control elements", () => {

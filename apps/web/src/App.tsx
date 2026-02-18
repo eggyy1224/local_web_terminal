@@ -29,7 +29,26 @@ function createEmptyContext(): SessionContext {
     tmuxPanes: [],
     shell: "",
     recentOutput: [],
-    lastCommands: []
+    lastCommands: [],
+    twoPane: {
+      activePaneId: "",
+      codex: {
+        id: "",
+        isActive: false,
+        lines: [],
+        role: "codex",
+        errors: []
+      },
+      workspace: {
+        id: "",
+        isActive: false,
+        lines: [],
+        role: "workspace",
+        workspaceKind: "unknown",
+        gitSnapshot: null,
+        errors: []
+      }
+    }
   };
 }
 

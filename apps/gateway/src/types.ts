@@ -17,6 +17,7 @@ export interface TerminalAdapter {
   getActivePane(sessionId: string): Promise<string>;
   getPaneContext(sessionId: string): Promise<PaneContext>;
   listPanes(sessionId: string): Promise<PaneSnapshot[]>;
+  capturePaneLines(sessionId: string, paneId: string, limit: number): Promise<string[]>;
   ensureSessionExists(sessionId: string): Promise<boolean>;
 }
 

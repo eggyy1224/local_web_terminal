@@ -6,6 +6,28 @@ import { extractRecentErrors } from "./contextCollector.js";
 const MAX_OUTPUT_CHUNKS = 400;
 const MAX_COMMANDS = 80;
 
+function emptyTwoPaneSnapshot() {
+  return {
+    activePaneId: "",
+    codex: {
+      id: "",
+      isActive: false,
+      lines: [],
+      role: "codex" as const,
+      errors: []
+    },
+    workspace: {
+      id: "",
+      isActive: false,
+      lines: [],
+      role: "workspace" as const,
+      workspaceKind: "unknown" as const,
+      gitSnapshot: null,
+      errors: []
+    }
+  };
+}
+
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
 
@@ -101,7 +123,8 @@ export class SessionStore {
       tmuxPanes: [],
       shell: state.shell,
       recentOutput,
-      lastCommands: state.lastCommands.slice(-20)
+      lastCommands: state.lastCommands.slice(-20),
+      twoPane: emptyTwoPaneSnapshot()
     };
   }
 }

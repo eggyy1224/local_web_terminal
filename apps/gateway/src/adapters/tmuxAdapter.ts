@@ -8,6 +8,14 @@ function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function normalizeCapturedLines(raw: string): string[] {
+  const lines = raw.split(/\r?\n/);
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
 export class TmuxAdapter implements TerminalAdapter {
   private readonly tmuxBin: string;
 
@@ -56,6 +64,7 @@ export class TmuxAdapter implements TerminalAdapter {
 
   async listPanes(sessionId: string): Promise<PaneSnapshot[]> {
     const clean = sanitizeSessionId(sessionId);
+    const targetWindow = await this.getActiveWindow(clean);
     const format = [
       "#{pane_id}",
       "#{pane_index}",
@@ -64,7 +73,7 @@ export class TmuxAdapter implements TerminalAdapter {
       "#{pane_current_path}",
       "#{pane_current_command}"
     ].join("\u001f");
-    const { stdout } = await execFileAsync(this.tmuxBin, ["list-panes", "-t", clean, "-F", format]);
+    const { stdout } = await execFileAsync(this.tmuxBin, ["list-panes", "-t", targetWindow, "-F", format]);
 
     return stdout
       .split("\n")
@@ -82,6 +91,19 @@ export class TmuxAdapter implements TerminalAdapter {
       });
   }
 
+  async capturePaneLines(sessionId: string, paneId: string, limit: number): Promise<string[]> {
+    const captureStart = Math.max(0, limit - 1);
+    const { stdout } = await execFileAsync(this.tmuxBin, [
+      "capture-pane",
+      "-p",
+      "-t",
+      paneId,
+      "-S",
+      `-${captureStart}`
+    ]);
+    return normalizeCapturedLines(stdout);
+  }
+
   async ensureSessionExists(sessionId: string): Promise<boolean> {
     const clean = sanitizeSessionId(sessionId);
     try {
@@ -90,6 +112,17 @@ export class TmuxAdapter implements TerminalAdapter {
     } catch {
       return false;
     }
+  }
+
+  private async getActiveWindow(cleanSessionId: string): Promise<string> {
+    const { stdout } = await execFileAsync(this.tmuxBin, [
+      "display-message",
+      "-p",
+      "-t",
+      cleanSessionId,
+      "#{window_id}"
+    ]);
+    return stdout.trim();
   }
 }
 
