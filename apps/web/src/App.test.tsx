@@ -1,6 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, createEmptyContext, writeSnapshotScripts } from "./App";
 
 vi.mock("xterm", () => ({
   Terminal: class MockTerminal {
@@ -23,37 +25,53 @@ vi.mock("xterm-addon-fit", () => ({
   }
 }));
 
-function scriptBody(markup: string, id: string): string {
-  const pattern = new RegExp(`<script[^>]*id="${id}"[^>]*>([\\s\\S]*?)<\\/script>`);
-  const match = markup.match(pattern);
-  expect(match?.[1]).toBeDefined();
-  return match![1];
-}
-
 describe("App snapshot sidecar", () => {
-  it("renders primary and alias hidden snapshot scripts with identical JSON", () => {
+  it("does not render hidden snapshot scripts in React tree", () => {
     const markup = renderToStaticMarkup(<App />);
-
-    const primary = scriptBody(markup, "snapshot-json");
-    const alias = scriptBody(markup, "ai-context-sidecar");
-    expect(primary).toBe(alias);
-
-    const parsed = JSON.parse(primary) as Record<string, unknown>;
-    expect(parsed).toHaveProperty("sessionId");
-    expect(parsed).toHaveProperty("context");
-    expect(parsed).toHaveProperty("updatedAt");
-    const context = parsed.context as Record<string, unknown>;
-    const twoPane = context.twoPane as Record<string, unknown>;
-    expect(twoPane).toBeTruthy();
-    const codex = twoPane.codex as Record<string, unknown>;
-    const workspace = twoPane.workspace as Record<string, unknown>;
-    expect(Array.isArray(codex.lines)).toBe(true);
-    expect(Array.isArray(workspace.lines)).toBe(true);
+    expect(markup).not.toContain("id=\"snapshot-json\"");
+    expect(markup).not.toContain("id=\"ai-context-sidecar\"");
   });
 
   it("does not add visible control elements", () => {
     const markup = renderToStaticMarkup(<App />);
     expect(markup).not.toContain("<button");
     expect(markup).not.toContain("<aside");
+  });
+
+  it("ships fixed snapshot placeholders outside React tree", () => {
+    const indexHtmlPath = path.resolve(process.cwd(), "index.html");
+    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    expect(html).toContain("id=\"snapshot-json\"");
+    expect(html).toContain("id=\"ai-context-sidecar\"");
+  });
+
+  it("writes escaped snapshot JSON into fixed script placeholders", () => {
+    const primary = { textContent: "" };
+    const alias = { textContent: "" };
+    const fakeDocument = {
+      querySelector(selector: string): { textContent: string } | null {
+        if (selector === "script#snapshot-json[type='application/json']") {
+          return primary;
+        }
+        if (selector === "script#ai-context-sidecar[type='application/json']") {
+          return alias;
+        }
+        return null;
+      }
+    };
+
+    writeSnapshotScripts(
+      {
+        sessionId: "s_test",
+        context: createEmptyContext(),
+        updatedAt: 123
+      },
+      fakeDocument
+    );
+
+    expect(primary.textContent).toBe(alias.textContent);
+    expect(primary.textContent.includes("<")).toBe(false);
+    const parsed = JSON.parse(primary.textContent) as Record<string, unknown>;
+    expect(parsed).toHaveProperty("context");
   });
 });

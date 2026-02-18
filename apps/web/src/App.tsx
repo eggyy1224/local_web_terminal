@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import type { SessionContext, WsClientMessage, WsServerMessage } from "@local-terminal/shared";
@@ -12,11 +12,19 @@ interface SidecarPayload {
   updatedAt: number;
 }
 
+interface SnapshotScriptNode {
+  textContent: string | null;
+}
+
+interface SnapshotWriterDocument {
+  querySelector(selector: string): SnapshotScriptNode | null;
+}
+
 function serializeSnapshot(payload: SidecarPayload): string {
   return JSON.stringify(payload).replace(/</g, "\\u003c");
 }
 
-function createEmptyContext(): SessionContext {
+export function createEmptyContext(): SessionContext {
   return {
     timestamp: 0,
     sessionId: "",
@@ -52,6 +60,19 @@ function createEmptyContext(): SessionContext {
   };
 }
 
+export function writeSnapshotScripts(payload: SidecarPayload, doc: SnapshotWriterDocument = document): void {
+  const serialized = serializeSnapshot(payload);
+  const primary = doc.querySelector("script#snapshot-json[type='application/json']");
+  if (primary) {
+    primary.textContent = serialized;
+  }
+
+  const alias = doc.querySelector("script#ai-context-sidecar[type='application/json']");
+  if (alias) {
+    alias.textContent = serialized;
+  }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${GATEWAY_BASE}${path}`, {
     ...init,
@@ -77,12 +98,13 @@ export function App() {
   const sessionIdRef = useRef<string | null>(null);
   const contextTimerRef = useRef<number | null>(null);
 
-  const [sidecar, setSidecar] = useState<SidecarPayload>({
-    sessionId: null,
-    context: createEmptyContext(),
-    updatedAt: Date.now()
-  });
-  const serializedSidecar = serializeSnapshot(sidecar);
+  useEffect(() => {
+    writeSnapshotScripts({
+      sessionId: null,
+      context: createEmptyContext(),
+      updatedAt: Date.now()
+    });
+  }, []);
 
   useEffect(() => {
     if (!terminalNodeRef.current || terminalRef.current) {
@@ -119,7 +141,7 @@ export function App() {
 
       try {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
-        setSidecar({
+        writeSnapshotScripts({
           sessionId,
           context: {
             ...createEmptyContext(),
@@ -188,15 +210,14 @@ export function App() {
       }
 
       sessionIdRef.current = sessionId;
-      setSidecar((prev) => ({
-        ...prev,
+      writeSnapshotScripts({
         sessionId,
         context: {
-          ...prev.context,
+          ...createEmptyContext(),
           sessionId
         },
         updatedAt: Date.now()
-      }));
+      });
       connectWs(sessionId);
       await refreshContext();
 
@@ -243,17 +264,6 @@ export function App() {
   return (
     <div className="terminal-only">
       <div ref={terminalNodeRef} className="terminal-root" />
-      <script
-        id="snapshot-json"
-        type="application/json"
-        dangerouslySetInnerHTML={{ __html: serializedSidecar }}
-      />
-      <script
-        id="ai-context-sidecar"
-        type="application/json"
-        data-alias-for="snapshot-json"
-        dangerouslySetInnerHTML={{ __html: serializedSidecar }}
-      />
     </div>
   );
 }
