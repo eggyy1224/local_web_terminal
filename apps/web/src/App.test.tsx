@@ -62,7 +62,6 @@ describe("App snapshot sidecar", () => {
 
     writeSnapshotScripts(
       {
-        sessionId: "s_test",
         context: createEmptyContext(),
         updatedAt: 123
       },
@@ -72,6 +71,11 @@ describe("App snapshot sidecar", () => {
     expect(primary.textContent).toBe(alias.textContent);
     expect(primary.textContent.includes("<")).toBe(false);
     const parsed = JSON.parse(primary.textContent) as Record<string, unknown>;
-    expect(parsed).toHaveProperty("context");
+    expect(parsed).toHaveProperty("twoPane");
+    const twoPane = parsed.twoPane as Record<string, unknown>;
+    const codex = twoPane.codex as Record<string, unknown>;
+    const workspace = twoPane.workspace as Record<string, unknown>;
+    expect(Array.isArray(codex.lines)).toBe(true);
+    expect(Array.isArray(workspace.lines)).toBe(true);
   });
 });

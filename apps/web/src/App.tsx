@@ -7,7 +7,6 @@ const GATEWAY_BASE = import.meta.env.VITE_GATEWAY_BASE ?? "http://127.0.0.1:8787
 const STORAGE_SESSION_KEY = "local-web-terminal:session";
 
 interface SidecarPayload {
-  sessionId: string | null;
   context: SessionContext;
   updatedAt: number;
 }
@@ -21,7 +20,16 @@ interface SnapshotWriterDocument {
 }
 
 function serializeSnapshot(payload: SidecarPayload): string {
-  return JSON.stringify(payload).replace(/</g, "\\u003c");
+  const flattened = {
+    ...createEmptyContext(),
+    ...payload.context,
+    twoPane: {
+      ...createEmptyContext().twoPane,
+      ...(payload.context.twoPane ?? {})
+    },
+    updatedAt: payload.updatedAt
+  };
+  return JSON.stringify(flattened).replace(/</g, "\\u003c");
 }
 
 export function createEmptyContext(): SessionContext {
@@ -100,7 +108,6 @@ export function App() {
 
   useEffect(() => {
     writeSnapshotScripts({
-      sessionId: null,
       context: createEmptyContext(),
       updatedAt: Date.now()
     });
@@ -142,7 +149,6 @@ export function App() {
       try {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
         writeSnapshotScripts({
-          sessionId,
           context: {
             ...createEmptyContext(),
             ...context
@@ -211,7 +217,6 @@ export function App() {
 
       sessionIdRef.current = sessionId;
       writeSnapshotScripts({
-        sessionId,
         context: {
           ...createEmptyContext(),
           sessionId
