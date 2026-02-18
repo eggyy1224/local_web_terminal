@@ -30,8 +30,10 @@ function emptyTwoPaneSnapshot() {
 
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
+  private mostRecentSessionId: string | null = null;
 
   ensure(sessionId: string): SessionState {
+    this.mostRecentSessionId = sessionId;
     const existing = this.sessions.get(sessionId);
     if (existing) {
       return existing;
@@ -51,6 +53,7 @@ export class SessionStore {
   }
 
   appendStdout(sessionId: string, chunk: string): void {
+    this.mostRecentSessionId = sessionId;
     const state = this.sessions.get(sessionId);
     if (!state) {
       return;
@@ -63,6 +66,7 @@ export class SessionStore {
   }
 
   appendInput(sessionId: string, incoming: string): void {
+    this.mostRecentSessionId = sessionId;
     const state = this.sessions.get(sessionId);
     if (!state) {
       return;
@@ -93,6 +97,7 @@ export class SessionStore {
   }
 
   setContext(sessionId: string, context: { cwd: string; shell: string }): void {
+    this.mostRecentSessionId = sessionId;
     const state = this.sessions.get(sessionId);
     if (!state) {
       return;
@@ -126,5 +131,9 @@ export class SessionStore {
       lastCommands: state.lastCommands.slice(-20),
       twoPane: emptyTwoPaneSnapshot()
     };
+  }
+
+  getMostRecentSessionId(): string | null {
+    return this.mostRecentSessionId;
   }
 }

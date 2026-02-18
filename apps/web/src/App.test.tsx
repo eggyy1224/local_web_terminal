@@ -43,11 +43,13 @@ describe("App snapshot sidecar", () => {
     const html = fs.readFileSync(indexHtmlPath, "utf8");
     expect(html).toContain("id=\"snapshot-json\"");
     expect(html).toContain("id=\"ai-context-sidecar\"");
+    expect(html).toContain("id=\"ai-snapshot\"");
   });
 
   it("writes escaped snapshot JSON into fixed script placeholders", () => {
     const primary = { textContent: "" };
     const alias = { textContent: "" };
+    const aiSnapshot = { textContent: "" };
     const fakeDocument = {
       querySelector(selector: string): { textContent: string } | null {
         if (selector === "script#snapshot-json[type='application/json']") {
@@ -55,6 +57,9 @@ describe("App snapshot sidecar", () => {
         }
         if (selector === "script#ai-context-sidecar[type='application/json']") {
           return alias;
+        }
+        if (selector === "#ai-snapshot") {
+          return aiSnapshot;
         }
         return null;
       }
@@ -77,5 +82,9 @@ describe("App snapshot sidecar", () => {
     const workspace = twoPane.workspace as Record<string, unknown>;
     expect(Array.isArray(codex.lines)).toBe(true);
     expect(Array.isArray(workspace.lines)).toBe(true);
+
+    expect(aiSnapshot.textContent.includes("<")).toBe(false);
+    const parsedAi = JSON.parse(aiSnapshot.textContent) as Record<string, unknown>;
+    expect(parsedAi).toHaveProperty("twoPane");
   });
 });

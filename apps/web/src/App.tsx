@@ -19,17 +19,8 @@ interface SnapshotWriterDocument {
   querySelector(selector: string): SnapshotScriptNode | null;
 }
 
-function serializeSnapshot(payload: SidecarPayload): string {
-  const flattened = {
-    ...createEmptyContext(),
-    ...payload.context,
-    twoPane: {
-      ...createEmptyContext().twoPane,
-      ...(payload.context.twoPane ?? {})
-    },
-    updatedAt: payload.updatedAt
-  };
-  return JSON.stringify(flattened).replace(/</g, "\\u003c");
+interface FlattenedSnapshot extends SessionContext {
+  updatedAt: number;
 }
 
 export function createEmptyContext(): SessionContext {
@@ -68,8 +59,44 @@ export function createEmptyContext(): SessionContext {
   };
 }
 
+function flattenSnapshot(payload: SidecarPayload): FlattenedSnapshot {
+  const empty = createEmptyContext();
+  return {
+    ...empty,
+    ...payload.context,
+    twoPane: {
+      ...empty.twoPane,
+      ...(payload.context.twoPane ?? {}),
+      codex: {
+        ...empty.twoPane.codex,
+        ...(payload.context.twoPane?.codex ?? {})
+      },
+      workspace: {
+        ...empty.twoPane.workspace,
+        ...(payload.context.twoPane?.workspace ?? {})
+      }
+    },
+    updatedAt: payload.updatedAt
+  };
+}
+
+function serializeSnapshot(snapshot: FlattenedSnapshot): string {
+  return JSON.stringify(snapshot).replace(/</g, "\\u003c");
+}
+
+function serializeAiSnapshot(snapshot: FlattenedSnapshot): string {
+  return JSON.stringify({
+    sessionId: snapshot.sessionId,
+    timestamp: snapshot.timestamp,
+    recentErrors: snapshot.recentErrors,
+    twoPane: snapshot.twoPane
+  }).replace(/</g, "\\u003c");
+}
+
 export function writeSnapshotScripts(payload: SidecarPayload, doc: SnapshotWriterDocument = document): void {
-  const serialized = serializeSnapshot(payload);
+  const flattened = flattenSnapshot(payload);
+  const serialized = serializeSnapshot(flattened);
+  const serializedAi = serializeAiSnapshot(flattened);
   const primary = doc.querySelector("script#snapshot-json[type='application/json']");
   if (primary) {
     primary.textContent = serialized;
@@ -78,6 +105,11 @@ export function writeSnapshotScripts(payload: SidecarPayload, doc: SnapshotWrite
   const alias = doc.querySelector("script#ai-context-sidecar[type='application/json']");
   if (alias) {
     alias.textContent = serialized;
+  }
+
+  const aiSnapshot = doc.querySelector("#ai-snapshot");
+  if (aiSnapshot) {
+    aiSnapshot.textContent = serializedAi;
   }
 }
 

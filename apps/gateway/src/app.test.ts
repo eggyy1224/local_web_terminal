@@ -264,3 +264,65 @@ describe("GET /api/context/:sessionId", () => {
     );
   });
 });
+
+describe("GET /__snapshot.json", () => {
+  it("returns twoPane snapshot for most recent session", async () => {
+    const store = new SessionStore();
+    const sessionId = "s_sidecar_latest";
+    store.ensure(sessionId);
+    const adapter = makeAdapter({
+      panes: [
+        {
+          id: "%1",
+          index: 0,
+          title: "codex",
+          active: true,
+          currentPath: process.cwd(),
+          currentCommand: "codex"
+        },
+        {
+          id: "%2",
+          index: 1,
+          title: "workspace",
+          active: false,
+          currentPath: process.cwd(),
+          currentCommand: "zsh"
+        }
+      ],
+      captureLinesByPane: {
+        "%1": ["codex recent line"],
+        "%2": ["workspace recent line"]
+      }
+    });
+    const app = await buildTestApp(adapter, store);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/__snapshot.json"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = response.json() as Record<string, unknown>;
+    expect(typeof parsed.sessionId).toBe("string");
+    expect(typeof parsed.timestamp).toBe("number");
+    const twoPane = parsed.twoPane as Record<string, unknown>;
+    expect(twoPane).toBeTruthy();
+    const codex = twoPane.codex as Record<string, unknown>;
+    const workspace = twoPane.workspace as Record<string, unknown>;
+    expect(Array.isArray(codex.lines)).toBe(true);
+    expect(Array.isArray(workspace.lines)).toBe(true);
+  });
+
+  it("returns 404 when no known session is available", async () => {
+    const store = new SessionStore();
+    const adapter = makeAdapter();
+    const app = await buildTestApp(adapter, store);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/__snapshot.json"
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+});
