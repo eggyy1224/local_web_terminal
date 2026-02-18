@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
-import type { SessionContext, WsClientMessage, WsServerMessage } from "@local-terminal/shared";
+import type { EnvContext, SessionContext, WsClientMessage, WsServerMessage } from "@local-terminal/shared";
 
 const GATEWAY_BASE = import.meta.env.VITE_GATEWAY_BASE ?? "http://127.0.0.1:8787";
 const STORAGE_SESSION_KEY = "local-web-terminal:session";
@@ -9,6 +9,7 @@ const STORAGE_SESSION_KEY = "local-web-terminal:session";
 interface SidecarPayload {
   context: SessionContext;
   updatedAt: number;
+  envContext?: EnvContext | null;
 }
 
 interface SnapshotScriptNode {
@@ -84,19 +85,34 @@ function serializeSnapshot(snapshot: FlattenedSnapshot): string {
   return JSON.stringify(snapshot).replace(/</g, "\\u003c");
 }
 
-function serializeAiSnapshot(snapshot: FlattenedSnapshot): string {
+function formatEnvContext(env: EnvContext): string {
+  return [
+    "[ENV_CONTEXT]",
+    `activePaneId: ${env.activePaneId}`,
+    `role: ${env.role}`,
+    `real_cwd: ${env.realCwd}`,
+    `repo_root: ${env.repoRoot}`,
+    `is_git_repo: ${String(env.isGitRepo)}`,
+    `tmux: session=${env.tmux.session} window=${env.tmux.window} pane=${env.tmux.pane}`,
+    "[/ENV_CONTEXT]"
+  ].join("\n");
+}
+
+function serializeAiSnapshot(snapshot: FlattenedSnapshot, envContext: EnvContext | null): string {
   return JSON.stringify({
     sessionId: snapshot.sessionId,
     timestamp: snapshot.timestamp,
     recentErrors: snapshot.recentErrors,
-    twoPane: snapshot.twoPane
+    twoPane: snapshot.twoPane,
+    envContext,
+    envContextText: envContext ? formatEnvContext(envContext) : ""
   }).replace(/</g, "\\u003c");
 }
 
 export function writeSnapshotScripts(payload: SidecarPayload, doc: SnapshotWriterDocument = document): void {
   const flattened = flattenSnapshot(payload);
   const serialized = serializeSnapshot(flattened);
-  const serializedAi = serializeAiSnapshot(flattened);
+  const serializedAi = serializeAiSnapshot(flattened, payload.envContext ?? null);
   const primary = doc.querySelector("script#snapshot-json[type='application/json']");
   if (primary) {
     primary.textContent = serialized;
@@ -137,11 +153,16 @@ export function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const contextTimerRef = useRef<number | null>(null);
+  const latestContextRef = useRef<SessionContext>(createEmptyContext());
+  const latestEnvContextRef = useRef<EnvContext | null>(null);
 
   useEffect(() => {
+    latestContextRef.current = createEmptyContext();
+    latestEnvContextRef.current = null;
     writeSnapshotScripts({
       context: createEmptyContext(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      envContext: null
     });
   }, []);
 
@@ -180,12 +201,15 @@ export function App() {
 
       try {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
+        const mergedContext = {
+          ...createEmptyContext(),
+          ...context
+        };
+        latestContextRef.current = mergedContext;
         writeSnapshotScripts({
-          context: {
-            ...createEmptyContext(),
-            ...context
-          },
-          updatedAt: Date.now()
+          context: mergedContext,
+          updatedAt: Date.now(),
+          envContext: latestEnvContextRef.current
         });
       } catch {
         // Keep terminal running even when context refresh fails.
@@ -212,6 +236,20 @@ export function App() {
         const parsed = JSON.parse(event.data) as WsServerMessage;
         if (parsed.type === "stdout") {
           terminal.write(String(parsed.data));
+          return;
+        }
+
+        if (parsed.type === "meta" && parsed.data.kind === "env_probe") {
+          const incoming = parsed.data.env;
+          const current = latestEnvContextRef.current;
+          if (!current || incoming.version >= current.version) {
+            latestEnvContextRef.current = incoming;
+            writeSnapshotScripts({
+              context: latestContextRef.current,
+              updatedAt: Date.now(),
+              envContext: incoming
+            });
+          }
         }
       };
 
@@ -248,12 +286,14 @@ export function App() {
       }
 
       sessionIdRef.current = sessionId;
+      latestContextRef.current = {
+        ...createEmptyContext(),
+        sessionId
+      };
       writeSnapshotScripts({
-        context: {
-          ...createEmptyContext(),
-          sessionId
-        },
-        updatedAt: Date.now()
+        context: latestContextRef.current,
+        updatedAt: Date.now(),
+        envContext: latestEnvContextRef.current
       });
       connectWs(sessionId);
       await refreshContext();

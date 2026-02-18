@@ -49,7 +49,7 @@ export async function buildApp() {
   const store = new SessionStore();
 
   await registerHttpRoutes(app, { adapter, store });
-  await registerWsRoutes(app, { store, originAllowList });
+  await registerWsRoutes(app, { adapter, store, originAllowList });
 
   return app;
 }

@@ -50,14 +50,37 @@ export interface SessionContext {
   twoPane: TwoPaneSnapshot;
 }
 
+export interface EnvContext {
+  activePaneId: string;
+  role: "codex" | "workspace";
+  realCwd: string;
+  repoRoot: string;
+  isGitRepo: boolean;
+  tmux: {
+    session: string;
+    window: string;
+    pane: string;
+  };
+  capturedAt: number;
+  version: number;
+}
+
 export interface WsClientMessage {
   type: "stdin" | "resize";
   data: string | { cols: number; rows: number };
 }
 
-export interface WsServerMessage {
-  type: "stdout" | "exit" | "error";
-  data: unknown;
-}
+export type WsServerMessage =
+  | {
+      type: "stdout" | "exit" | "error";
+      data: unknown;
+    }
+  | {
+      type: "meta";
+      data: {
+        kind: "env_probe";
+        env: EnvContext;
+      };
+    };
 
 export const LOCAL_ORIGIN_DEFAULT = "http://127.0.0.1:5173,http://localhost:5173";

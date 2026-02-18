@@ -87,4 +87,55 @@ describe("App snapshot sidecar", () => {
     const parsedAi = JSON.parse(aiSnapshot.textContent) as Record<string, unknown>;
     expect(parsedAi).toHaveProperty("twoPane");
   });
+
+  it("injects hidden env context only into ai snapshot payload", () => {
+    const primary = { textContent: "" };
+    const alias = { textContent: "" };
+    const aiSnapshot = { textContent: "" };
+    const fakeDocument = {
+      querySelector(selector: string): { textContent: string } | null {
+        if (selector === "script#snapshot-json[type='application/json']") {
+          return primary;
+        }
+        if (selector === "script#ai-context-sidecar[type='application/json']") {
+          return alias;
+        }
+        if (selector === "#ai-snapshot") {
+          return aiSnapshot;
+        }
+        return null;
+      }
+    };
+
+    writeSnapshotScripts(
+      {
+        context: createEmptyContext(),
+        updatedAt: 456,
+        envContext: {
+          activePaneId: "%33",
+          role: "codex",
+          realCwd: "/tmp/workspace",
+          repoRoot: "/tmp/workspace",
+          isGitRepo: true,
+          tmux: {
+            session: "s_abc",
+            window: "1",
+            pane: "3"
+          },
+          capturedAt: 111,
+          version: 2
+        }
+      },
+      fakeDocument
+    );
+
+    const parsedPrimary = JSON.parse(primary.textContent) as Record<string, unknown>;
+    expect(parsedPrimary).not.toHaveProperty("envContext");
+    const parsedAi = JSON.parse(aiSnapshot.textContent) as Record<string, unknown>;
+    expect(parsedAi).toHaveProperty("envContext");
+    const envText = String(parsedAi.envContextText ?? "");
+    expect(envText).toContain("[ENV_CONTEXT]");
+    expect(envText).toContain("activePaneId: %33");
+    expect(envText).toContain("[/ENV_CONTEXT]");
+  });
 });

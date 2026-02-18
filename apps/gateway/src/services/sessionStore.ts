@@ -1,4 +1,4 @@
-import type { SessionContext } from "@local-terminal/shared";
+import type { EnvContext, SessionContext } from "@local-terminal/shared";
 import { maskSensitive } from "@local-terminal/security";
 import type { SessionState } from "../types.js";
 import { extractRecentErrors } from "./contextCollector.js";
@@ -45,7 +45,8 @@ export class SessionStore {
       lastCommands: [],
       currentInput: "",
       shell: "zsh",
-      cwd: process.cwd()
+      cwd: process.cwd(),
+      envProbeVersion: 0
     };
 
     this.sessions.set(sessionId, state);
@@ -135,5 +136,40 @@ export class SessionStore {
 
   getMostRecentSessionId(): string | null {
     return this.mostRecentSessionId;
+  }
+
+  nextEnvProbeVersion(sessionId: string): number {
+    this.mostRecentSessionId = sessionId;
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return 0;
+    }
+
+    state.envProbeVersion += 1;
+    return state.envProbeVersion;
+  }
+
+  setLatestEnvContext(sessionId: string, env: EnvContext): void {
+    this.mostRecentSessionId = sessionId;
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return;
+    }
+
+    if (env.version < state.envProbeVersion) {
+      return;
+    }
+
+    state.envProbeVersion = env.version;
+    state.latestEnvContext = env;
+  }
+
+  getLatestEnvContext(sessionId: string): EnvContext | null {
+    const state = this.sessions.get(sessionId);
+    if (!state?.latestEnvContext) {
+      return null;
+    }
+
+    return state.latestEnvContext;
   }
 }

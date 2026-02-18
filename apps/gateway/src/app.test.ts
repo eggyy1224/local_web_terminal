@@ -37,6 +37,21 @@ function makeAdapter(behavior: AdapterBehavior = {}): TerminalAdapter {
       }
       return behavior.paneContext ?? { cwd: process.cwd(), shell: "zsh" };
     },
+    async probeActiveEnvironment() {
+      return {
+        activePaneId: behavior.activePaneId ?? "%1",
+        paneCurrentPath: process.cwd(),
+        paneCurrentCommand: "zsh",
+        paneTitle: "",
+        tmux: {
+          session: "s_test",
+          window: "0",
+          pane: "0"
+        },
+        repoRoot: "",
+        isGitRepo: false
+      };
+    },
     async listPanes() {
       if (behavior.panesError) {
         throw new Error("list_panes_failed");

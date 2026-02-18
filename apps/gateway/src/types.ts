@@ -1,3 +1,5 @@
+import type { EnvContext } from "@local-terminal/shared";
+
 export interface PaneContext {
   cwd: string;
   shell: string;
@@ -12,11 +14,26 @@ export interface PaneSnapshot {
   currentCommand: string;
 }
 
+export interface ActiveEnvironmentProbe {
+  activePaneId: string;
+  paneCurrentPath: string;
+  paneCurrentCommand: string;
+  paneTitle: string;
+  tmux: {
+    session: string;
+    window: string;
+    pane: string;
+  };
+  repoRoot: string;
+  isGitRepo: boolean;
+}
+
 export interface TerminalAdapter {
   createSession(sessionId: string, cols: number, rows: number): Promise<{ activePaneId: string }>;
   getActivePane(sessionId: string): Promise<string>;
   getPaneContext(sessionId: string): Promise<PaneContext>;
-  listPanes(sessionId: string): Promise<PaneSnapshot[]>;
+  probeActiveEnvironment(sessionId: string, probeTarget?: string): Promise<ActiveEnvironmentProbe>;
+  listPanes(sessionId: string, probeTarget?: string): Promise<PaneSnapshot[]>;
   capturePaneLines(sessionId: string, paneId: string, limit: number): Promise<string[]>;
   ensureSessionExists(sessionId: string): Promise<boolean>;
 }
@@ -28,4 +45,6 @@ export interface SessionState {
   currentInput: string;
   shell: string;
   cwd: string;
+  envProbeVersion: number;
+  latestEnvContext?: EnvContext;
 }

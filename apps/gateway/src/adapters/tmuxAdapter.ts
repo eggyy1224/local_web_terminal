@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PaneContext, PaneSnapshot, TerminalAdapter } from "../types.js";
+import type { ActiveEnvironmentProbe, PaneContext, PaneSnapshot, TerminalAdapter } from "../types.js";
 
 const execFileAsync = promisify(execFile);
+const PROBE_EXEC_TIMEOUT_MS = Number.parseInt(process.env.ENV_PROBE_TIMEOUT_MS ?? "180", 10) || 180;
 
 function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -62,9 +63,66 @@ export class TmuxAdapter implements TerminalAdapter {
     };
   }
 
-  async listPanes(sessionId: string): Promise<PaneSnapshot[]> {
+  async probeActiveEnvironment(sessionId: string, probeTarget?: string): Promise<ActiveEnvironmentProbe> {
     const clean = sanitizeSessionId(sessionId);
-    const targetWindow = await this.getActiveWindow(clean);
+    const target = probeTarget?.trim() || clean;
+    const format = [
+      "#{client_session}",
+      "#{session_name}",
+      "#{window_index}",
+      "#{pane_id}",
+      "#{pane_index}",
+      "#{pane_current_path}",
+      "#{pane_current_command}",
+      "#{pane_title}"
+    ].join("\u001f");
+
+    const { stdout } = await execFileAsync(
+      this.tmuxBin,
+      ["display-message", "-p", "-t", target, format],
+      { timeout: PROBE_EXEC_TIMEOUT_MS, maxBuffer: 128 * 1024 }
+    );
+
+    const [clientSession, sessionName, tmuxWindow, activePaneId, tmuxPane, paneCurrentPath, paneCurrentCommand, paneTitle] =
+      stdout.trim().split("\u001f");
+    const tmuxSession = (clientSession ?? "").trim() || (sessionName ?? "").trim();
+
+    const realCwd = (paneCurrentPath ?? "").trim();
+    let repoRoot = "";
+    let isGitRepo = false;
+
+    if (realCwd) {
+      try {
+        const repo = await execFileAsync("git", ["-C", realCwd, "rev-parse", "--show-toplevel"], {
+          timeout: PROBE_EXEC_TIMEOUT_MS,
+          maxBuffer: 64 * 1024
+        });
+        repoRoot = repo.stdout.trim();
+        isGitRepo = repoRoot.length > 0;
+      } catch {
+        repoRoot = "";
+        isGitRepo = false;
+      }
+    }
+
+    return {
+      activePaneId: (activePaneId ?? "").trim(),
+      paneCurrentPath: realCwd,
+      paneCurrentCommand: (paneCurrentCommand ?? "").trim(),
+      paneTitle: (paneTitle ?? "").trim(),
+      tmux: {
+        session: tmuxSession,
+        window: (tmuxWindow ?? "").trim(),
+        pane: (tmuxPane ?? "").trim()
+      },
+      repoRoot,
+      isGitRepo
+    };
+  }
+
+  async listPanes(sessionId: string, probeTarget?: string): Promise<PaneSnapshot[]> {
+    const clean = sanitizeSessionId(sessionId);
+    const targetWindow = await this.getActiveWindow(clean, probeTarget);
     const format = [
       "#{pane_id}",
       "#{pane_index}",
@@ -114,12 +172,13 @@ export class TmuxAdapter implements TerminalAdapter {
     }
   }
 
-  private async getActiveWindow(cleanSessionId: string): Promise<string> {
+  private async getActiveWindow(cleanSessionId: string, probeTarget?: string): Promise<string> {
+    const target = probeTarget?.trim() || cleanSessionId;
     const { stdout } = await execFileAsync(this.tmuxBin, [
       "display-message",
       "-p",
       "-t",
-      cleanSessionId,
+      target,
       "#{window_id}"
     ]);
     return stdout.trim();
