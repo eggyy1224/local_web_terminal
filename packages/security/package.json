@@ -9,7 +9,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "vitest run",
-    "lint": "echo 'No lint for security'",
+    "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

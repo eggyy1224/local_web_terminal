@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "lint": "echo 'No lint for web'",
+    "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

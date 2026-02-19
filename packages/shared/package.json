@@ -8,8 +8,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "vitest run --passWithNoTests",
-    "lint": "echo 'No lint for shared'",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

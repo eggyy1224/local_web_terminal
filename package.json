@@ -12,12 +12,22 @@
     "dev": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && concurrently -n shared,security,gateway,web \"npm run dev -w @local-terminal/shared\" \"npm run dev -w @local-terminal/security\" \"npm run dev -w @local-terminal/gateway\" \"npm run dev -w @local-terminal/web\"",
     "build": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && npm run build -w @local-terminal/gateway && npm run build -w @local-terminal/web",
     "test": "npm run test -w @local-terminal/shared && npm run test -w @local-terminal/security && npm run test -w @local-terminal/gateway && npm run test -w @local-terminal/web",
-    "lint": "npm run lint -w @local-terminal/shared && npm run lint -w @local-terminal/security && npm run lint -w @local-terminal/gateway && npm run lint -w @local-terminal/web",
-    "typecheck": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && npm run typecheck -w @local-terminal/gateway && npm run typecheck -w @local-terminal/web && npm run typecheck -w @local-terminal/security && npm run typecheck -w @local-terminal/shared"
+    "lint": "npm run lint -w @local-terminal/shared && npm run lint -w @local-terminal/security && npm run lint -w @local-terminal/gateway && npm run lint -w @local-terminal/web && npm run lint:root",
+    "lint:root": "eslint playwright.config.ts tests/e2e/**/*.ts",
+    "typecheck": "npm run build -w @local-terminal/shared && npm run build -w @local-terminal/security && npm run typecheck -w @local-terminal/gateway && npm run typecheck -w @local-terminal/web && npm run typecheck -w @local-terminal/security && npm run typecheck -w @local-terminal/shared",
+    "e2e": "playwright test --project=chromium",
+    "e2e:headed": "playwright test --project=chromium --headed"
   },
   "devDependencies": {
+    "@eslint/js": "^9.22.0",
     "@esbuild/darwin-arm64": "^0.27.3",
+    "@playwright/test": "^1.58.2",
     "concurrently": "^9.2.1",
+    "eslint": "^9.22.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^16.0.0",
+    "typescript-eslint": "^8.26.1",
     "typescript": "^5.8.2"
   }
 }
