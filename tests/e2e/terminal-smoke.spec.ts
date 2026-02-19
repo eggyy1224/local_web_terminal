@@ -187,3 +187,18 @@ test("terminal smoke: snapshot, command stream and reload reconnect", async ({ p
   await page.keyboard.press("Enter");
   await waitForMarkerInRecentOutput(page, sessionId, markerAfterReload);
 });
+
+test("creates a different session for a new browser tab", async ({ page, context }) => {
+  const tmuxVersion = spawnSync("tmux", ["-V"], { encoding: "utf8" });
+  test.skip(tmuxVersion.status !== 0, `tmux is required for e2e, got: ${tmuxVersion.stderr || tmuxVersion.stdout}`);
+
+  await page.goto("/");
+  const firstTabSessionId = await waitForSessionId(page);
+
+  const secondPage = await context.newPage();
+  await secondPage.goto("/");
+  const secondTabSessionId = await waitForSessionId(secondPage);
+
+  expect(secondTabSessionId).not.toBe(firstTabSessionId);
+  await secondPage.close();
+});
