@@ -149,7 +149,23 @@ describe("App snapshot sidecar", () => {
     const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
     const source = fs.readFileSync(appSourcePath, "utf8");
     expect(source.includes("setInterval(")).toBe(false);
-    expect(source.includes("context_snapshot")).toBe(true);
+    expect(source.includes("useWsStream")).toBe(true);
+  });
+
+  it("marks disposed and clears session binding on cleanup", () => {
+    const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
+    const source = fs.readFileSync(appSourcePath, "utf8");
+    expect(source.includes("disposedRef.current = true")).toBe(true);
+    expect(source.includes("sessionIdRef.current = null")).toBe(true);
+  });
+
+  it("guards websocket parsing and reconnect with disposed/session checks", () => {
+    const wsHookPath = path.resolve(process.cwd(), "src/hooks/useWsStream.ts");
+    const source = fs.readFileSync(wsHookPath, "utf8");
+    expect(source.includes("parseWsServerMessage")).toBe(true);
+    expect(source.includes("ignored_invalid_ws_json")).toBe(true);
+    expect(source.includes("disposedRef.current")).toBe(true);
+    expect(source.includes("sessionId !== targetSessionId")).toBe(true);
   });
 
   it("merges incoming context with required defaults", () => {

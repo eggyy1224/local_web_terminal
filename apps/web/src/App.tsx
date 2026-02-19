@@ -1,196 +1,152 @@
-import { useEffect, useRef } from "react";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
-import type { EnvContext, SessionContext, WsClientMessage, WsServerMessage } from "@local-terminal/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { EnvContext, SessionContext, WsClientMessage } from "@local-terminal/shared";
+import { useSessionBootstrap } from "./hooks/useSessionBootstrap.js";
+import { useTerminal } from "./hooks/useTerminal.js";
+import { useWsStream } from "./hooks/useWsStream.js";
+import { createApiClient, DEFAULT_GATEWAY_BASE } from "./services/apiClient.js";
+import {
+  createEmptyContext,
+  mergeIncomingContext,
+  syncEnvContextFromSnapshot,
+  writeSnapshotScripts
+} from "./services/snapshotWriter.js";
 
-const GATEWAY_BASE = import.meta.env.VITE_GATEWAY_BASE ?? "http://127.0.0.1:8787";
+const GATEWAY_BASE = DEFAULT_GATEWAY_BASE;
 const CONTEXT_BOOTSTRAP_TIMEOUT_MS =
   Number.parseInt(
     String(import.meta.env.VITE_CONTEXT_BOOTSTRAP_TIMEOUT_MS ?? import.meta.env.CONTEXT_BOOTSTRAP_TIMEOUT_MS ?? "1500"),
     10
   ) || 1500;
-const STORAGE_SESSION_KEY = "local-web-terminal:session";
+const api = createApiClient(GATEWAY_BASE);
 
-interface SidecarPayload {
-  context: SessionContext;
-  updatedAt: number;
-  envContext?: EnvContext | null;
-}
-
-interface SnapshotScriptNode {
-  textContent: string | null;
-}
-
-interface SnapshotWriterDocument {
-  querySelector(selector: string): SnapshotScriptNode | null;
-}
-
-interface FlattenedSnapshot extends SessionContext {
-  updatedAt: number;
-}
-
-export function syncEnvContextFromSnapshot(
-  context: FlattenedSnapshot,
-  current: EnvContext | null
-): EnvContext | null {
-  const panes = Array.isArray(context.panes) ? context.panes : [];
-  const activePane = panes.find((pane) => pane.isActive);
-  if (!activePane) {
-    return current;
-  }
-
-  const tmuxPane = current?.tmux ?? { session: "", window: "", pane: "" };
-  return {
-    activePaneId: activePane.id,
-    role: activePane.role,
-    realCwd: activePane.cwd,
-    repoRoot: activePane.repoRoot ?? "",
-    isGitRepo: Boolean(activePane.repoRoot),
-    tmux: {
-      session: tmuxPane.session,
-      window: tmuxPane.window,
-      pane: activePane.id
-    },
-    capturedAt: context.timestamp,
-    version: current?.version ?? 0
-  };
-}
-
-type SessionStorageReader = Pick<Storage, "getItem">;
-type SessionStorageWriter = Pick<Storage, "setItem">;
-
-export function readTabSessionId(storage?: SessionStorageReader): string | null {
-  const target = storage ?? (typeof window !== "undefined" ? window.sessionStorage : null);
-  if (!target) {
-    return null;
-  }
-  return target.getItem(STORAGE_SESSION_KEY);
-}
-
-export function writeTabSessionId(sessionId: string, storage?: SessionStorageWriter): void {
-  const target = storage ?? (typeof window !== "undefined" ? window.sessionStorage : null);
-  if (!target) {
+function logWarn(code: string, error?: unknown): void {
+  if (!import.meta.env.DEV) {
     return;
   }
-  target.setItem(STORAGE_SESSION_KEY, sessionId);
-}
-
-export function createEmptyContext(): SessionContext {
-  return {
-    timestamp: 0,
-    sessionId: "",
-    cwd: "",
-    repoRoot: "",
-    branch: "",
-    gitStatusPorcelain: "",
-    diffStat: "",
-    recentErrors: [],
-    tmuxPanes: [],
-    shell: "",
-    recentOutput: [],
-    lastCommands: [],
-    panes: []
-  };
-}
-
-export function mergeIncomingContext(context: SessionContext): SessionContext {
-  return {
-    ...createEmptyContext(),
-    ...context
-  };
-}
-
-function flattenSnapshot(payload: SidecarPayload): FlattenedSnapshot {
-  const empty = createEmptyContext();
-  const panes = Array.isArray(payload.context.panes) ? payload.context.panes : [];
-  return {
-    ...empty,
-    ...payload.context,
-    panes: panes.map((pane) => ({
-      ...pane,
-      lines: Array.isArray(pane.lines) ? pane.lines : [],
-      errors: Array.isArray(pane.errors) ? pane.errors : []
-    })),
-    updatedAt: payload.updatedAt
-  };
-}
-
-function serializeSnapshot(snapshot: FlattenedSnapshot): string {
-  return JSON.stringify(snapshot).replace(/</g, "\\u003c");
-}
-
-function formatEnvContext(env: EnvContext): string {
-  return [
-    "[ENV_CONTEXT]",
-    `activePaneId: ${env.activePaneId}`,
-    `role: ${env.role}`,
-    `real_cwd: ${env.realCwd}`,
-    `repo_root: ${env.repoRoot}`,
-    `is_git_repo: ${String(env.isGitRepo)}`,
-    `tmux: session=${env.tmux.session} window=${env.tmux.window} pane=${env.tmux.pane}`,
-    "[/ENV_CONTEXT]"
-  ].join("\n");
-}
-
-function serializeAiSnapshot(snapshot: FlattenedSnapshot, envContext: EnvContext | null): string {
-  return JSON.stringify({
-    sessionId: snapshot.sessionId,
-    timestamp: snapshot.timestamp,
-    recentErrors: snapshot.recentErrors,
-    panes: snapshot.panes,
-    envContext,
-    envContextText: envContext ? formatEnvContext(envContext) : ""
-  }).replace(/</g, "\\u003c");
-}
-
-export function writeSnapshotScripts(payload: SidecarPayload, doc: SnapshotWriterDocument = document): void {
-  const flattened = flattenSnapshot(payload);
-  const serialized = serializeSnapshot(flattened);
-  const serializedAi = serializeAiSnapshot(flattened, payload.envContext ?? null);
-  const primary = doc.querySelector("script#snapshot-json[type='application/json']");
-  if (primary) {
-    primary.textContent = serialized;
-  }
-
-  const alias = doc.querySelector("script#ai-context-sidecar[type='application/json']");
-  if (alias) {
-    alias.textContent = serialized;
-  }
-
-  const aiSnapshot = doc.querySelector("#ai-snapshot");
-  if (aiSnapshot) {
-    aiSnapshot.textContent = serializedAi;
-  }
-}
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${GATEWAY_BASE}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {})
-    }
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${path} failed: ${body}`);
-  }
-
-  return response.json() as Promise<T>;
+  console.warn(code, error);
 }
 
 export function App() {
   const terminalNodeRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
-  const bootstrapTimerRef = useRef<number | null>(null);
   const latestContextRef = useRef<SessionContext>(createEmptyContext());
   const latestEnvContextRef = useRef<EnvContext | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const disposedRef = useRef(false);
+  const sendMessageRef = useRef<(message: WsClientMessage) => void>(() => {});
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  const onTerminalData = useCallback((data: string) => {
+    sendMessageRef.current({ type: "stdin", data });
+  }, []);
+
+  const onTerminalResize = useCallback((size: { cols: number; rows: number }) => {
+    sendMessageRef.current({
+      type: "resize",
+      data: { cols: size.cols, rows: size.rows }
+    });
+  }, []);
+
+  const { terminalRef, getDimensions, fit } = useTerminal({
+    terminalNodeRef,
+    onData: onTerminalData,
+    onResize: onTerminalResize
+  });
+
+  const refreshContext = useCallback(async (sessionIdHint?: string) => {
+    const targetSessionId = sessionIdHint ?? sessionIdRef.current;
+    if (!targetSessionId) {
+      return false;
+    }
+
+    try {
+      const context = await api<SessionContext>(`/api/context/${targetSessionId}`);
+      const mergedContext = mergeIncomingContext(context);
+      const syncedEnvContext = syncEnvContextFromSnapshot(
+        { ...mergedContext, updatedAt: Date.now() },
+        latestEnvContextRef.current
+      );
+      latestEnvContextRef.current = syncedEnvContext;
+      latestContextRef.current = mergedContext;
+      writeSnapshotScripts({
+        context: mergedContext,
+        updatedAt: Date.now(),
+        envContext: syncedEnvContext
+      });
+      return true;
+    } catch (error) {
+      logWarn("context_refresh_failed", error);
+      return false;
+    }
+  }, []);
+
+  const onStdout = useCallback(
+    (data: string) => {
+      terminalRef.current?.write(data);
+    },
+    [terminalRef]
+  );
+
+  const onContextSnapshot = useCallback((snapshot: SessionContext, updatedAt: number) => {
+    const mergedContext = mergeIncomingContext(snapshot);
+    const syncedEnvContext = syncEnvContextFromSnapshot(
+      { ...mergedContext, updatedAt },
+      latestEnvContextRef.current
+    );
+    latestEnvContextRef.current = syncedEnvContext;
+    latestContextRef.current = mergedContext;
+    writeSnapshotScripts({
+      context: mergedContext,
+      updatedAt,
+      envContext: syncedEnvContext
+    });
+  }, []);
+
+  const onEnvProbe = useCallback((incoming: EnvContext) => {
+    const current = latestEnvContextRef.current;
+    if (!current || incoming.version >= current.version) {
+      latestEnvContextRef.current = incoming;
+      writeSnapshotScripts({
+        context: latestContextRef.current,
+        updatedAt: Date.now(),
+        envContext: incoming
+      });
+    }
+  }, []);
+
+  const { sendMessage } = useWsStream({
+    gatewayBase: GATEWAY_BASE,
+    sessionId,
+    contextBootstrapTimeoutMs: CONTEXT_BOOTSTRAP_TIMEOUT_MS,
+    getDimensions,
+    onStdout,
+    onContextSnapshot,
+    onEnvProbe,
+    onBootstrapTimeout: async (nextSessionId) => {
+      await refreshContext(nextSessionId);
+    },
+    disposedRef
+  });
 
   useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
+  const createSession = useCallback(async (): Promise<string> => {
+    const dims = getDimensions();
+    const created = await api<{ sessionId: string }>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        cols: dims?.cols ?? 120,
+        rows: dims?.rows ?? 35
+      })
+    });
+    return created.sessionId;
+  }, [getDimensions]);
+
+  const { bootSession } = useSessionBootstrap({ createSession });
+
+  useEffect(() => {
+    disposedRef.current = false;
     latestContextRef.current = createEmptyContext();
     latestEnvContextRef.current = null;
     writeSnapshotScripts({
@@ -198,211 +154,39 @@ export function App() {
       updatedAt: Date.now(),
       envContext: null
     });
-  }, []);
 
-  useEffect(() => {
-    if (!terminalNodeRef.current || terminalRef.current) {
-      return;
-    }
-
-    const terminal = new Terminal({
-      fontFamily: "JetBrains Mono, SF Mono, Menlo, monospace",
-      fontSize: 14,
-      cursorBlink: true,
-      scrollback: 5000,
-      theme: {
-        background: "#0f1420",
-        foreground: "#d4def8",
-        cursor: "#f4b942",
-        selectionBackground: "#214575"
-      }
-    });
-
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-
-    terminal.open(terminalNodeRef.current);
-    fitAddon.fit();
-
-    terminalRef.current = terminal;
-    fitRef.current = fitAddon;
-
-    const clearBootstrapTimer = () => {
-      if (bootstrapTimerRef.current !== null) {
-        window.clearTimeout(bootstrapTimerRef.current);
-        bootstrapTimerRef.current = null;
-      }
-    };
-
-    const refreshContext = async (sessionIdHint?: string) => {
-      const sessionId = sessionIdHint ?? sessionIdRef.current;
-      if (!sessionId) {
-        return false;
-      }
-
-      try {
-        const context = await api<SessionContext>(`/api/context/${sessionId}`);
-        const mergedContext = mergeIncomingContext(context);
-        const syncedEnvContext = syncEnvContextFromSnapshot(
-          { ...mergedContext, updatedAt: Date.now() },
-          latestEnvContextRef.current
-        );
-        latestEnvContextRef.current = syncedEnvContext;
-        latestContextRef.current = mergedContext;
-        writeSnapshotScripts({
-          context: mergedContext,
-          updatedAt: Date.now(),
-          envContext: syncedEnvContext
-        });
-        return true;
-      } catch {
-        // Keep terminal running even when context refresh fails.
-        return false;
-      }
-    };
-
-    const connectWs = (sessionId: string) => {
-      const base = GATEWAY_BASE.replace("http://", "ws://").replace("https://", "wss://");
-      const ws = new WebSocket(`${base}/ws/sessions/${sessionId}/stream`);
-      wsRef.current = ws;
-      let hasReceivedContextSnapshot = false;
-
-      ws.onopen = () => {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          const payload: WsClientMessage = {
-            type: "resize",
-            data: { cols: dims.cols, rows: dims.rows }
-          };
-          ws.send(JSON.stringify(payload));
-        }
-
-        clearBootstrapTimer();
-        bootstrapTimerRef.current = window.setTimeout(() => {
-          if (sessionIdRef.current !== sessionId || hasReceivedContextSnapshot) {
-            return;
-          }
-          void refreshContext(sessionId);
-        }, CONTEXT_BOOTSTRAP_TIMEOUT_MS);
-      };
-
-      ws.onmessage = (event) => {
-        const parsed = JSON.parse(event.data) as WsServerMessage;
-        if (parsed.type === "stdout") {
-          terminal.write(String(parsed.data));
-          return;
-        }
-
-        if (parsed.type === "meta" && parsed.data.kind === "context_snapshot") {
-          hasReceivedContextSnapshot = true;
-          clearBootstrapTimer();
-          const mergedContext = mergeIncomingContext(parsed.data.snapshot);
-          const syncedEnvContext = syncEnvContextFromSnapshot(
-            { ...mergedContext, updatedAt: parsed.data.updatedAt },
-            latestEnvContextRef.current
-          );
-          latestEnvContextRef.current = syncedEnvContext;
-          latestContextRef.current = mergedContext;
-          writeSnapshotScripts({
-            context: mergedContext,
-            updatedAt: parsed.data.updatedAt,
-            envContext: syncedEnvContext
-          });
-          return;
-        }
-
-        if (parsed.type === "meta" && parsed.data.kind === "env_probe") {
-          const incoming = parsed.data.env;
-          const current = latestEnvContextRef.current;
-          if (!current || incoming.version >= current.version) {
-            latestEnvContextRef.current = incoming;
-            writeSnapshotScripts({
-              context: latestContextRef.current,
-              updatedAt: Date.now(),
-              envContext: incoming
-            });
-          }
-        }
-      };
-
-      ws.onclose = () => {
-        clearBootstrapTimer();
-        if (sessionIdRef.current !== sessionId) {
-          return;
-        }
-
-        window.setTimeout(() => {
-          if (sessionIdRef.current === sessionId) {
-            connectWs(sessionId);
-          }
-        }, 1200);
-      };
-    };
-
-    const createSession = async (): Promise<string> => {
-      const dims = fitAddon.proposeDimensions();
-      const created = await api<{ sessionId: string }>("/api/sessions", {
-        method: "POST",
-        body: JSON.stringify({
-          cols: dims?.cols ?? 120,
-          rows: dims?.rows ?? 35
-        })
-      });
-      return created.sessionId;
-    };
-
+    let active = true;
     const boot = async () => {
-      let sessionId = readTabSessionId();
-      if (!sessionId) {
-        sessionId = await createSession();
-        writeTabSessionId(sessionId);
-      }
-
-      sessionIdRef.current = sessionId;
-      latestContextRef.current = {
-        ...createEmptyContext(),
-        sessionId
-      };
-      writeSnapshotScripts({
-        context: latestContextRef.current,
-        updatedAt: Date.now(),
-        envContext: latestEnvContextRef.current
-      });
-      connectWs(sessionId);
-    };
-
-    const onResize = () => {
-      fitAddon.fit();
-      const dims = fitAddon.proposeDimensions();
-      if (dims && wsRef.current?.readyState === WebSocket.OPEN) {
-        const payload: WsClientMessage = {
-          type: "resize",
-          data: { cols: dims.cols, rows: dims.rows }
+      try {
+        const nextSessionId = await bootSession();
+        if (!active || disposedRef.current) {
+          return;
+        }
+        sessionIdRef.current = nextSessionId;
+        latestContextRef.current = {
+          ...createEmptyContext(),
+          sessionId: nextSessionId
         };
-        wsRef.current.send(JSON.stringify(payload));
+        writeSnapshotScripts({
+          context: latestContextRef.current,
+          updatedAt: Date.now(),
+          envContext: latestEnvContextRef.current
+        });
+        fit();
+        setSessionId(nextSessionId);
+      } catch (error) {
+        logWarn("session_bootstrap_failed", error);
       }
     };
-
-    window.addEventListener("resize", onResize);
-
-    terminal.onData((data) => {
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      const payload: WsClientMessage = { type: "stdin", data };
-      wsRef.current.send(JSON.stringify(payload));
-    });
 
     void boot();
-
     return () => {
-      window.removeEventListener("resize", onResize);
-      wsRef.current?.close();
-      clearBootstrapTimer();
-      terminal.dispose();
-      terminalRef.current = null;
+      active = false;
+      disposedRef.current = true;
+      sessionIdRef.current = null;
+      setSessionId(null);
     };
-  }, []);
+  }, [bootSession, fit]);
 
   return (
     <div className="terminal-only">
@@ -410,3 +194,6 @@ export function App() {
     </div>
   );
 }
+
+export { createEmptyContext, mergeIncomingContext, syncEnvContextFromSnapshot, writeSnapshotScripts };
+export { readTabSessionId, writeTabSessionId } from "./hooks/useSessionBootstrap.js";
