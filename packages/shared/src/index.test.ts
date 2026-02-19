@@ -47,4 +47,35 @@ describe("shared runtime contracts", () => {
     expect(message.data.kind).toBe("env_probe");
     expect(message.data.env.tmux.session).toBe("s_test");
   });
+
+  it("keeps valid context snapshot ws server meta shape", () => {
+    const message: WsServerMessage = {
+      type: "meta",
+      data: {
+        kind: "context_snapshot",
+        reason: "connect",
+        updatedAt: Date.now(),
+        snapshot: {
+          timestamp: Date.now(),
+          sessionId: "s_123",
+          cwd: "/tmp/workspace",
+          repoRoot: "/tmp/workspace",
+          branch: "main",
+          gitStatusPorcelain: "",
+          diffStat: "",
+          recentErrors: [],
+          tmuxPanes: [],
+          shell: "zsh",
+          recentOutput: [],
+          lastCommands: [],
+          panes: []
+        }
+      }
+    };
+
+    expect(message.type).toBe("meta");
+    expect(message.data.kind).toBe("context_snapshot");
+    expect(message.data.reason).toBe("connect");
+    expect(message.data.snapshot.sessionId).toBe("s_123");
+  });
 });

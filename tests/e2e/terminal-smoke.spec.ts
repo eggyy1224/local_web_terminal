@@ -155,6 +155,7 @@ test("terminal smoke: snapshot, command stream and reload reconnect", async ({ p
   const snapshotText = await page.locator("#snapshot-json").textContent();
   expect(snapshotText).toBeTruthy();
   const snapshot = JSON.parse(snapshotText ?? "{}") as Record<string, unknown>;
+  const snapshotTimestampBeforeCommand = Number(snapshot.timestamp ?? 0);
   for (const key of REQUIRED_SNAPSHOT_KEYS) {
     expect(Object.hasOwn(snapshot, key)).toBe(true);
   }
@@ -174,6 +175,16 @@ test("terminal smoke: snapshot, command stream and reload reconnect", async ({ p
   await page.keyboard.press("Enter");
   await page.keyboard.type("pwd");
   await page.keyboard.press("Enter");
+  await expect
+    .poll(
+      async () => {
+        const raw = await page.locator("#snapshot-json").textContent();
+        const parsed = JSON.parse(raw ?? "{}") as Record<string, unknown>;
+        return Number(parsed.timestamp ?? 0);
+      },
+      { timeout: 2_000, message: "snapshot timestamp should advance within 2 seconds after command submit" }
+    )
+    .toBeGreaterThan(snapshotTimestampBeforeCommand);
   await waitForMarkerInRecentOutput(page, sessionId, markerBeforeReload);
 
   const reconnectReady = waitForNextSessionStreamReady(page, sessionId);

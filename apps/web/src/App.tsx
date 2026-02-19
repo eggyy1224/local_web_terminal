@@ -4,6 +4,11 @@ import { FitAddon } from "xterm-addon-fit";
 import type { EnvContext, SessionContext, WsClientMessage, WsServerMessage } from "@local-terminal/shared";
 
 const GATEWAY_BASE = import.meta.env.VITE_GATEWAY_BASE ?? "http://127.0.0.1:8787";
+const CONTEXT_BOOTSTRAP_TIMEOUT_MS =
+  Number.parseInt(
+    String(import.meta.env.VITE_CONTEXT_BOOTSTRAP_TIMEOUT_MS ?? import.meta.env.CONTEXT_BOOTSTRAP_TIMEOUT_MS ?? "1500"),
+    10
+  ) || 1500;
 const STORAGE_SESSION_KEY = "local-web-terminal:session";
 
 interface SidecarPayload {
@@ -58,6 +63,13 @@ export function createEmptyContext(): SessionContext {
     recentOutput: [],
     lastCommands: [],
     panes: []
+  };
+}
+
+export function mergeIncomingContext(context: SessionContext): SessionContext {
+  return {
+    ...createEmptyContext(),
+    ...context
   };
 }
 
@@ -147,7 +159,7 @@ export function App() {
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const contextTimerRef = useRef<number | null>(null);
+  const bootstrapTimerRef = useRef<number | null>(null);
   const latestContextRef = useRef<SessionContext>(createEmptyContext());
   const latestEnvContextRef = useRef<EnvContext | null>(null);
 
@@ -188,26 +200,32 @@ export function App() {
     terminalRef.current = terminal;
     fitRef.current = fitAddon;
 
-    const refreshContext = async () => {
-      const sessionId = sessionIdRef.current;
+    const clearBootstrapTimer = () => {
+      if (bootstrapTimerRef.current !== null) {
+        window.clearTimeout(bootstrapTimerRef.current);
+        bootstrapTimerRef.current = null;
+      }
+    };
+
+    const refreshContext = async (sessionIdHint?: string) => {
+      const sessionId = sessionIdHint ?? sessionIdRef.current;
       if (!sessionId) {
-        return;
+        return false;
       }
 
       try {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
-        const mergedContext = {
-          ...createEmptyContext(),
-          ...context
-        };
+        const mergedContext = mergeIncomingContext(context);
         latestContextRef.current = mergedContext;
         writeSnapshotScripts({
           context: mergedContext,
           updatedAt: Date.now(),
           envContext: latestEnvContextRef.current
         });
+        return true;
       } catch {
         // Keep terminal running even when context refresh fails.
+        return false;
       }
     };
 
@@ -215,6 +233,7 @@ export function App() {
       const base = GATEWAY_BASE.replace("http://", "ws://").replace("https://", "wss://");
       const ws = new WebSocket(`${base}/ws/sessions/${sessionId}/stream`);
       wsRef.current = ws;
+      let hasReceivedContextSnapshot = false;
 
       ws.onopen = () => {
         const dims = fitAddon.proposeDimensions();
@@ -225,12 +244,33 @@ export function App() {
           };
           ws.send(JSON.stringify(payload));
         }
+
+        clearBootstrapTimer();
+        bootstrapTimerRef.current = window.setTimeout(() => {
+          if (sessionIdRef.current !== sessionId || hasReceivedContextSnapshot) {
+            return;
+          }
+          void refreshContext(sessionId);
+        }, CONTEXT_BOOTSTRAP_TIMEOUT_MS);
       };
 
       ws.onmessage = (event) => {
         const parsed = JSON.parse(event.data) as WsServerMessage;
         if (parsed.type === "stdout") {
           terminal.write(String(parsed.data));
+          return;
+        }
+
+        if (parsed.type === "meta" && parsed.data.kind === "context_snapshot") {
+          hasReceivedContextSnapshot = true;
+          clearBootstrapTimer();
+          const mergedContext = mergeIncomingContext(parsed.data.snapshot);
+          latestContextRef.current = mergedContext;
+          writeSnapshotScripts({
+            context: mergedContext,
+            updatedAt: parsed.data.updatedAt,
+            envContext: latestEnvContextRef.current
+          });
           return;
         }
 
@@ -249,6 +289,7 @@ export function App() {
       };
 
       ws.onclose = () => {
+        clearBootstrapTimer();
         if (sessionIdRef.current !== sessionId) {
           return;
         }
@@ -291,11 +332,6 @@ export function App() {
         envContext: latestEnvContextRef.current
       });
       connectWs(sessionId);
-      await refreshContext();
-
-      contextTimerRef.current = window.setInterval(() => {
-        void refreshContext();
-      }, 10000);
     };
 
     const onResize = () => {
@@ -325,9 +361,7 @@ export function App() {
     return () => {
       window.removeEventListener("resize", onResize);
       wsRef.current?.close();
-      if (contextTimerRef.current !== null) {
-        window.clearInterval(contextTimerRef.current);
-      }
+      clearBootstrapTimer();
       terminal.dispose();
       terminalRef.current = null;
     };

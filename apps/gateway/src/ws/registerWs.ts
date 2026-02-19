@@ -2,12 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import pty from "node-pty";
-import type { EnvContext, PaneRole } from "@local-terminal/shared";
+import type { ContextSnapshotReason, EnvContext, PaneRole } from "@local-terminal/shared";
 import { z } from "zod";
 import { attachCommand } from "../adapters/tmuxAdapter.js";
 import { classifyPaneRole, probeWorkspace } from "../services/contextCollector.js";
-import type { SessionStore } from "../services/sessionStore.js";
-import type { PaneSnapshot, TerminalAdapter } from "../types.js";
+import { buildSessionContextSnapshot, type ContextSnapshotDeps } from "../services/contextSnapshot.js";
+import type { PaneSnapshot } from "../types.js";
 import { isLoopbackOrigin } from "../utils/origin.js";
 
 const execFileAsync = promisify(execFile);
@@ -17,13 +17,30 @@ const messageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("resize"), data: z.object({ cols: z.number().int().positive(), rows: z.number().int().positive() }) })
 ]);
 
+const REASON_PRIORITY: Record<ContextSnapshotReason, number> = {
+  connect: 5,
+  submit: 4,
+  heartbeat: 3,
+  resize: 2,
+  stdout: 1
+};
+
+function pickHighestPriorityReason(reasons: Set<ContextSnapshotReason>): ContextSnapshotReason {
+  let best: ContextSnapshotReason = "stdout";
+  let bestScore = -1;
+  for (const reason of reasons) {
+    const score = REASON_PRIORITY[reason] ?? 0;
+    if (score > bestScore) {
+      best = reason;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 export async function registerWsRoutes(
   app: FastifyInstance,
-  deps: {
-    adapter: TerminalAdapter;
-    store: SessionStore;
-    originAllowList: Set<string>;
-  }
+  deps: ContextSnapshotDeps & { originAllowList: Set<string> }
 ): Promise<void> {
   const resolveClientTargetByPid = async (pid: number): Promise<string | null> => {
     if (!Number.isInteger(pid) || pid <= 0) {
@@ -90,8 +107,140 @@ export async function registerWsRoutes(
 
     const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
     const sessionId = params.sessionId;
+    const contextPushDebounceMs = Number.parseInt(process.env.CONTEXT_PUSH_DEBOUNCE_MS ?? "300", 10) || 300;
+    const contextPushHeartbeatMs = Number.parseInt(process.env.CONTEXT_PUSH_HEARTBEAT_MS ?? "15000", 10) || 15_000;
     deps.store.ensure(sessionId);
     let probeTargetPromise: Promise<string | null> | null = null;
+    let contextPushInFlight = false;
+    let contextPushPendingUrgent = false;
+    let contextPushLastAt = 0;
+    const contextPushPendingReasons = new Set<ContextSnapshotReason>();
+    let contextPushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let contextPushHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let contextPushDisposed = false;
+
+    const clearContextPushDebounce = () => {
+      if (contextPushDebounceTimer !== null) {
+        clearTimeout(contextPushDebounceTimer);
+        contextPushDebounceTimer = null;
+      }
+    };
+
+    const disposeContextPush = () => {
+      contextPushDisposed = true;
+      clearContextPushDebounce();
+      if (contextPushHeartbeatTimer !== null) {
+        clearInterval(contextPushHeartbeatTimer);
+        contextPushHeartbeatTimer = null;
+      }
+      contextPushPendingReasons.clear();
+      contextPushPendingUrgent = false;
+    };
+
+    const flushContextSnapshotPush = async (forceImmediate: boolean) => {
+      if (contextPushDisposed || socket.readyState !== 1 || contextPushInFlight || contextPushPendingReasons.size === 0) {
+        return;
+      }
+
+      if (!forceImmediate) {
+        const elapsed = Date.now() - contextPushLastAt;
+        if (elapsed < contextPushDebounceMs) {
+          if (contextPushDebounceTimer === null) {
+            const delay = Math.max(1, contextPushDebounceMs - elapsed);
+            contextPushDebounceTimer = setTimeout(() => {
+              contextPushDebounceTimer = null;
+              void flushContextSnapshotPush(false);
+            }, delay);
+          }
+          return;
+        }
+      }
+
+      clearContextPushDebounce();
+      const reason = pickHighestPriorityReason(contextPushPendingReasons);
+      contextPushPendingReasons.clear();
+      contextPushPendingUrgent = false;
+      contextPushInFlight = true;
+      try {
+        const snapshot = await buildSessionContextSnapshot(sessionId, deps);
+        if (!snapshot || contextPushDisposed || socket.readyState !== 1) {
+          return;
+        }
+
+        const updatedAt = Date.now();
+        contextPushLastAt = updatedAt;
+        socket.send(
+          JSON.stringify({
+            type: "meta",
+            data: {
+              kind: "context_snapshot",
+              snapshot,
+              updatedAt,
+              reason
+            }
+          })
+        );
+      } catch {
+        // Silent fallback: keep terminal behavior unchanged when context snapshot push fails.
+      } finally {
+        contextPushInFlight = false;
+        if (contextPushDisposed || socket.readyState !== 1 || contextPushPendingReasons.size === 0) {
+          return;
+        }
+
+        if (contextPushPendingUrgent) {
+          void flushContextSnapshotPush(true);
+          return;
+        }
+
+        const elapsed = Date.now() - contextPushLastAt;
+        if (elapsed >= contextPushDebounceMs) {
+          void flushContextSnapshotPush(false);
+          return;
+        }
+
+        if (contextPushDebounceTimer === null) {
+          const delay = Math.max(1, contextPushDebounceMs - elapsed);
+          contextPushDebounceTimer = setTimeout(() => {
+            contextPushDebounceTimer = null;
+            void flushContextSnapshotPush(false);
+          }, delay);
+        }
+      }
+    };
+
+    const queueContextSnapshotPush = (reason: ContextSnapshotReason, urgent = false) => {
+      if (contextPushDisposed) {
+        return;
+      }
+
+      contextPushPendingReasons.add(reason);
+
+      if (urgent) {
+        contextPushPendingUrgent = true;
+        clearContextPushDebounce();
+        void flushContextSnapshotPush(true);
+        return;
+      }
+
+      if (contextPushInFlight) {
+        return;
+      }
+
+      const elapsed = Date.now() - contextPushLastAt;
+      if (elapsed >= contextPushDebounceMs) {
+        void flushContextSnapshotPush(false);
+        return;
+      }
+
+      if (contextPushDebounceTimer === null) {
+        const delay = Math.max(1, contextPushDebounceMs - elapsed);
+        contextPushDebounceTimer = setTimeout(() => {
+          contextPushDebounceTimer = null;
+          void flushContextSnapshotPush(false);
+        }, delay);
+      }
+    };
 
     const runHiddenEnvironmentProbe = async () => {
       const version = deps.store.nextEnvProbeVersion(sessionId);
@@ -158,10 +307,15 @@ export async function registerWsRoutes(
       env: process.env
     });
     probeTargetPromise = resolveClientTargetByPid(term.pid ?? 0);
+    contextPushHeartbeatTimer = setInterval(() => {
+      queueContextSnapshotPush("heartbeat", true);
+    }, contextPushHeartbeatMs);
+    queueContextSnapshotPush("connect", true);
 
     term.onData((data) => {
       deps.store.appendStdout(sessionId, data);
       socket.send(JSON.stringify({ type: "stdout", data }));
+      queueContextSnapshotPush("stdout");
     });
 
     term.onExit(({ exitCode, signal }) => {
@@ -183,14 +337,17 @@ export async function registerWsRoutes(
         term.write(parsed.data);
         if (hasSubmitBoundary(parsed.data)) {
           void runHiddenEnvironmentProbe();
+          queueContextSnapshotPush("submit", true);
         }
         return;
       }
 
       term.resize(parsed.data.cols, parsed.data.rows);
+      queueContextSnapshotPush("resize");
     });
 
     socket.on("close", () => {
+      disposeContextPush();
       term.kill();
     });
   });

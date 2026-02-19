@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { App, createEmptyContext, readTabSessionId, writeSnapshotScripts, writeTabSessionId } from "./App";
+import {
+  App,
+  createEmptyContext,
+  mergeIncomingContext,
+  readTabSessionId,
+  writeSnapshotScripts,
+  writeTabSessionId
+} from "./App";
 
 vi.mock("xterm", () => ({
   Terminal: class MockTerminal {
@@ -134,6 +141,35 @@ describe("App snapshot sidecar", () => {
     expect(envText).toContain("[ENV_CONTEXT]");
     expect(envText).toContain("activePaneId: %33");
     expect(envText).toContain("[/ENV_CONTEXT]");
+  });
+
+  it("keeps push-first context flow without fixed polling interval", () => {
+    const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
+    const source = fs.readFileSync(appSourcePath, "utf8");
+    expect(source.includes("setInterval(")).toBe(false);
+    expect(source.includes("context_snapshot")).toBe(true);
+  });
+
+  it("merges incoming context with required defaults", () => {
+    const merged = mergeIncomingContext({
+      timestamp: 42,
+      sessionId: "s_push",
+      cwd: "/tmp/demo",
+      repoRoot: "",
+      branch: "",
+      gitStatusPorcelain: "",
+      diffStat: "",
+      recentErrors: [],
+      tmuxPanes: [],
+      shell: "zsh",
+      recentOutput: [],
+      lastCommands: [],
+      panes: []
+    });
+
+    expect(merged.sessionId).toBe("s_push");
+    expect(Array.isArray(merged.panes)).toBe(true);
+    expect(Array.isArray(merged.recentOutput)).toBe(true);
   });
 });
 

@@ -70,6 +70,8 @@ export interface WsClientMessage {
   data: string | { cols: number; rows: number };
 }
 
+export type ContextSnapshotReason = "connect" | "stdout" | "submit" | "resize" | "heartbeat";
+
 export type WsServerMessage =
   | {
       type: "stdout" | "exit" | "error";
@@ -80,6 +82,15 @@ export type WsServerMessage =
       data: {
         kind: "env_probe";
         env: EnvContext;
+      };
+    }
+  | {
+      type: "meta";
+      data: {
+        kind: "context_snapshot";
+        snapshot: SessionContext;
+        updatedAt: number;
+        reason: ContextSnapshotReason;
       };
     };
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import pty from "node-pty";
 import { SessionStore } from "../services/sessionStore.js";
 import { registerWsRoutes } from "./registerWs.js";
@@ -58,6 +58,7 @@ class FakeSocket implements WebSocketLike {
       return;
     }
     this.closed = true;
+    this.readyState = 3;
     this.emit("close");
   }
 
@@ -160,8 +161,25 @@ async function waitFor(
 }
 
 describe("registerWsRoutes", () => {
+  const originalDebounce = process.env.CONTEXT_PUSH_DEBOUNCE_MS;
+  const originalHeartbeat = process.env.CONTEXT_PUSH_HEARTBEAT_MS;
+
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (originalDebounce === undefined) {
+      delete process.env.CONTEXT_PUSH_DEBOUNCE_MS;
+    } else {
+      process.env.CONTEXT_PUSH_DEBOUNCE_MS = originalDebounce;
+    }
+
+    if (originalHeartbeat === undefined) {
+      delete process.env.CONTEXT_PUSH_HEARTBEAT_MS;
+    } else {
+      process.env.CONTEXT_PUSH_HEARTBEAT_MS = originalHeartbeat;
+    }
   });
 
   it("rejects non-loopback origin not in allow list", async () => {
@@ -211,6 +229,92 @@ describe("registerWsRoutes", () => {
 
     const messages = socket.sent.map((raw) => JSON.parse(raw) as { type: string; data: string });
     expect(messages).toContainEqual({ type: "error", data: "invalid_message" });
+  });
+
+  it("pushes context snapshot immediately on connect", async () => {
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter(),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId: "s_ws_connect_push" }
+    });
+
+    await waitFor(() =>
+      socket.sent.some((raw) => {
+        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+      })
+    );
+
+    const meta = socket.sent
+      .map(
+        (raw) =>
+          JSON.parse(raw) as {
+            type: string;
+            data?: { kind?: string; reason?: string; snapshot?: { sessionId?: string } };
+          }
+      )
+      .find((item) => item.type === "meta" && item.data?.kind === "context_snapshot");
+    expect(meta?.data?.snapshot?.sessionId).toBe("s_ws_connect_push");
+  });
+
+  it("coalesces stdout burst into a bounded number of context pushes", async () => {
+    process.env.CONTEXT_PUSH_DEBOUNCE_MS = "40";
+    process.env.CONTEXT_PUSH_HEARTBEAT_MS = "100000";
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter(),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId: "s_ws_stdout_burst" }
+    });
+
+    await waitFor(() =>
+      socket.sent.some((raw) => {
+        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+      })
+    );
+
+    term.emitData("line-1\n");
+    term.emitData("line-2\n");
+    term.emitData("line-3\n");
+
+    await waitFor(
+      () =>
+        socket.sent.filter((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "context_snapshot";
+        }).length >= 2,
+      { timeoutMs: 2_000 }
+    );
+
+    const contextSnapshots = socket.sent.filter((raw) => {
+      const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+      return parsed.type === "meta" && parsed.data?.kind === "context_snapshot";
+    });
+    expect(contextSnapshots).toHaveLength(2);
   });
 
   it("handles stdin/resize and emits env_probe meta after submit", async () => {
@@ -481,5 +585,42 @@ describe("registerWsRoutes", () => {
 
     socket.close();
     expect(term.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops heartbeat-driven pushes after websocket closes", async () => {
+    process.env.CONTEXT_PUSH_DEBOUNCE_MS = "10";
+    process.env.CONTEXT_PUSH_HEARTBEAT_MS = "40";
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+    const ensureSessionExists = vi.fn(async () => true);
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter({ ensureSessionExists }),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId: "s_ws_close_heartbeat" }
+    });
+
+    await waitFor(() =>
+      socket.sent.some((raw) => {
+        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+      })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 65));
+    const callsBeforeClose = ensureSessionExists.mock.calls.length;
+    socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(ensureSessionExists.mock.calls.length).toBe(callsBeforeClose);
   });
 });

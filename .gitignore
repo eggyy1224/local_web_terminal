@@ -4,3 +4,4 @@ coverage
 .playwright
 .DS_Store
 *.log
+test-results/.last-run.json
