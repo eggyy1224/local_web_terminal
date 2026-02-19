@@ -52,10 +52,17 @@ export async function registerWsRoutes(
     panes: PaneSnapshot[],
     fallback: { currentCommand: string; title: string; currentPath: string }
   ): Promise<PaneRole> => {
-    const activePane =
-      panes.find((pane) => pane.id === activePaneId) ??
-      panes.find((pane) => pane.active) ??
-      null;
+    const paneByActivePaneId = activePaneId ? panes.find((pane) => pane.id === activePaneId) ?? null : null;
+    if (activePaneId && !paneByActivePaneId) {
+      const workspace = await probeWorkspace(fallback.currentPath);
+      return classifyPaneRole({
+        currentCommand: fallback.currentCommand,
+        title: fallback.title,
+        workspaceKind: workspace.kind
+      });
+    }
+
+    const activePane = paneByActivePaneId ?? panes.find((pane) => pane.active) ?? null;
     if (activePane) {
       const workspace = await probeWorkspace(activePane.currentPath);
       return classifyPaneRole({
