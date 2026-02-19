@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { LOCAL_ORIGIN_DEFAULT, type WsClientMessage, type WsServerMessage } from "./index.js";
+import {
+  LOCAL_ORIGIN_DEFAULT,
+  parseWsClientMessage,
+  parseWsServerMessage,
+  type WsClientMessage,
+  type WsServerMessage
+} from "./index.js";
 
 describe("LOCAL_ORIGIN_DEFAULT", () => {
   it("contains both loopback defaults", () => {
@@ -19,6 +25,12 @@ describe("shared runtime contracts", () => {
     expect(message.type).toBe("stdin");
     expect(typeof message.data).toBe("string");
     expect(message.data).toContain("pwd");
+    expect(parseWsClientMessage(message)).toEqual(message);
+  });
+
+  it("rejects invalid ws client shape", () => {
+    expect(parseWsClientMessage({ type: "stdin", data: 42 })).toBeNull();
+    expect(parseWsClientMessage({ type: "resize", data: { cols: 0, rows: 10 } })).toBeNull();
   });
 
   it("keeps valid env probe ws server meta shape", () => {
@@ -46,6 +58,7 @@ describe("shared runtime contracts", () => {
     expect(message.type).toBe("meta");
     expect(message.data.kind).toBe("env_probe");
     expect(message.data.env.tmux.session).toBe("s_test");
+    expect(parseWsServerMessage(message)).toEqual(message);
   });
 
   it("keeps valid context snapshot ws server meta shape", () => {
@@ -77,5 +90,20 @@ describe("shared runtime contracts", () => {
     expect(message.data.kind).toBe("context_snapshot");
     expect(message.data.reason).toBe("connect");
     expect(message.data.snapshot.sessionId).toBe("s_123");
+    expect(parseWsServerMessage(message)).toEqual(message);
+  });
+
+  it("rejects invalid ws server shape", () => {
+    expect(parseWsServerMessage({ type: "meta", data: { kind: "env_probe" } })).toBeNull();
+    expect(
+      parseWsServerMessage({
+        type: "meta",
+        data: {
+          kind: "context_snapshot",
+          reason: "connect",
+          updatedAt: 1
+        }
+      })
+    ).toBeNull();
   });
 });
