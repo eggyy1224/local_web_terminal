@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import type { EnvContext, PaneRole, PaneView } from "@local-terminal/shared";
 import {
   App,
   createEmptyContext,
+  syncEnvContextFromSnapshot,
   mergeIncomingContext,
   readTabSessionId,
   writeSnapshotScripts,
@@ -170,6 +172,98 @@ describe("App snapshot sidecar", () => {
     expect(merged.sessionId).toBe("s_push");
     expect(Array.isArray(merged.panes)).toBe(true);
     expect(Array.isArray(merged.recentOutput)).toBe(true);
+  });
+
+  it("syncs env context from active pane in snapshot data", () => {
+    const now = Date.now();
+    const tool: PaneRole = "tool";
+    const workspace: PaneRole = "workspace";
+    const base = {
+      sessionId: "s_sync",
+      cwd: "/tmp/workspace",
+      repoRoot: "/tmp/repo",
+      branch: "main",
+      gitStatusPorcelain: "",
+      diffStat: "",
+      recentErrors: [],
+      tmuxPanes: [],
+      shell: "zsh",
+      recentOutput: [],
+      lastCommands: [],
+      panes: [
+        {
+          id: "%1",
+          isActive: false,
+          role: tool,
+          lines: [],
+          cwd: "/tmp/tool",
+          repoRoot: "/tmp/repo"
+        },
+        {
+          id: "%2",
+          isActive: true,
+          role: workspace,
+          lines: [],
+          cwd: "/tmp/workspace",
+          repoRoot: "/tmp/repo"
+        }
+      ] satisfies PaneView[],
+      timestamp: now
+    };
+
+    const synced = syncEnvContextFromSnapshot(
+      { ...base, updatedAt: now },
+      {
+        role: "tool",
+        activePaneId: "%1",
+        realCwd: "/tmp/tool",
+        repoRoot: "/tmp/repo",
+        isGitRepo: true,
+        tmux: { session: "s", window: "0", pane: "1" },
+        capturedAt: now - 10_000,
+        version: 7
+      } as EnvContext
+    );
+
+    expect(synced).toMatchObject({
+      activePaneId: "%2",
+      role: "workspace",
+      realCwd: "/tmp/workspace",
+      repoRoot: "/tmp/repo",
+      isGitRepo: true,
+      tmux: { session: "s", window: "0", pane: "%2" },
+      version: 7
+    });
+    expect(synced?.capturedAt).toBe(now);
+  });
+
+  it("keeps current env context when panes payload is not an array", () => {
+    const now = Date.now();
+    const current: EnvContext = {
+      activePaneId: "%1",
+      role: "coding_agent",
+      realCwd: "/tmp/current",
+      repoRoot: "/tmp/current-repo",
+      isGitRepo: true,
+      tmux: { session: "s", window: "0", pane: "1" },
+      capturedAt: now - 20_000,
+      version: 3
+    };
+
+    const invalidSnapshot = {
+      ...createEmptyContext(),
+      panes: null,
+      timestamp: now,
+      sessionId: "s_invalid_panes",
+      updatedAt: now
+    } as unknown as Parameters<typeof syncEnvContextFromSnapshot>[0];
+
+    const synced = syncEnvContextFromSnapshot(
+      invalidSnapshot,
+      current
+    );
+
+    expect(synced).toBe(current);
   });
 });
 

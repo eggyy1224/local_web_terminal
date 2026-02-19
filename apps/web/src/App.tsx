@@ -29,6 +29,33 @@ interface FlattenedSnapshot extends SessionContext {
   updatedAt: number;
 }
 
+export function syncEnvContextFromSnapshot(
+  context: FlattenedSnapshot,
+  current: EnvContext | null
+): EnvContext | null {
+  const panes = Array.isArray(context.panes) ? context.panes : [];
+  const activePane = panes.find((pane) => pane.isActive);
+  if (!activePane) {
+    return current;
+  }
+
+  const tmuxPane = current?.tmux ?? { session: "", window: "", pane: "" };
+  return {
+    activePaneId: activePane.id,
+    role: activePane.role,
+    realCwd: activePane.cwd,
+    repoRoot: activePane.repoRoot ?? "",
+    isGitRepo: Boolean(activePane.repoRoot),
+    tmux: {
+      session: tmuxPane.session,
+      window: tmuxPane.window,
+      pane: activePane.id
+    },
+    capturedAt: context.timestamp,
+    version: current?.version ?? 0
+  };
+}
+
 type SessionStorageReader = Pick<Storage, "getItem">;
 type SessionStorageWriter = Pick<Storage, "setItem">;
 
@@ -216,11 +243,16 @@ export function App() {
       try {
         const context = await api<SessionContext>(`/api/context/${sessionId}`);
         const mergedContext = mergeIncomingContext(context);
+        const syncedEnvContext = syncEnvContextFromSnapshot(
+          { ...mergedContext, updatedAt: Date.now() },
+          latestEnvContextRef.current
+        );
+        latestEnvContextRef.current = syncedEnvContext;
         latestContextRef.current = mergedContext;
         writeSnapshotScripts({
           context: mergedContext,
           updatedAt: Date.now(),
-          envContext: latestEnvContextRef.current
+          envContext: syncedEnvContext
         });
         return true;
       } catch {
@@ -265,11 +297,16 @@ export function App() {
           hasReceivedContextSnapshot = true;
           clearBootstrapTimer();
           const mergedContext = mergeIncomingContext(parsed.data.snapshot);
+          const syncedEnvContext = syncEnvContextFromSnapshot(
+            { ...mergedContext, updatedAt: parsed.data.updatedAt },
+            latestEnvContextRef.current
+          );
+          latestEnvContextRef.current = syncedEnvContext;
           latestContextRef.current = mergedContext;
           writeSnapshotScripts({
             context: mergedContext,
             updatedAt: parsed.data.updatedAt,
-            envContext: latestEnvContextRef.current
+            envContext: syncedEnvContext
           });
           return;
         }
