@@ -24,6 +24,25 @@ interface FlattenedSnapshot extends SessionContext {
   updatedAt: number;
 }
 
+type SessionStorageReader = Pick<Storage, "getItem">;
+type SessionStorageWriter = Pick<Storage, "setItem">;
+
+export function readTabSessionId(storage?: SessionStorageReader): string | null {
+  const target = storage ?? (typeof window !== "undefined" ? window.sessionStorage : null);
+  if (!target) {
+    return null;
+  }
+  return target.getItem(STORAGE_SESSION_KEY);
+}
+
+export function writeTabSessionId(sessionId: string, storage?: SessionStorageWriter): void {
+  const target = storage ?? (typeof window !== "undefined" ? window.sessionStorage : null);
+  if (!target) {
+    return;
+  }
+  target.setItem(STORAGE_SESSION_KEY, sessionId);
+}
+
 export function createEmptyContext(): SessionContext {
   return {
     timestamp: 0,
@@ -279,10 +298,10 @@ export function App() {
     };
 
     const boot = async () => {
-      let sessionId = window.localStorage.getItem(STORAGE_SESSION_KEY);
+      let sessionId = readTabSessionId();
       if (!sessionId) {
         sessionId = await createSession();
-        window.localStorage.setItem(STORAGE_SESSION_KEY, sessionId);
+        writeTabSessionId(sessionId);
       }
 
       sessionIdRef.current = sessionId;

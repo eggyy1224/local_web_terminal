@@ -30,6 +30,13 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173)
 
 Gateway runs on [http://127.0.0.1:8787](http://127.0.0.1:8787)
 
+## Session Behavior
+
+- Session binding is per browser tab (`sessionStorage` key: `local-web-terminal:session`)
+- Reloading the same tab reuses its tmux session
+- Opening a new tab creates a different tmux session by default
+- Legacy shared `localStorage` session binding is no longer used
+
 ## Env
 
 - `GATEWAY_PORT` default `8787`

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { App, createEmptyContext, writeSnapshotScripts } from "./App";
+import { App, createEmptyContext, readTabSessionId, writeSnapshotScripts, writeTabSessionId } from "./App";
 
 vi.mock("xterm", () => ({
   Terminal: class MockTerminal {
@@ -137,5 +137,22 @@ describe("App snapshot sidecar", () => {
     expect(envText).toContain("[ENV_CONTEXT]");
     expect(envText).toContain("activePaneId: %33");
     expect(envText).toContain("[/ENV_CONTEXT]");
+  });
+});
+
+describe("tab session storage", () => {
+  it("reads tab session id from provided storage", () => {
+    const getItem = vi.fn((key: string) => (key === "local-web-terminal:session" ? "s_tab_1" : null));
+    const sessionId = readTabSessionId({ getItem });
+
+    expect(sessionId).toBe("s_tab_1");
+    expect(getItem).toHaveBeenCalledWith("local-web-terminal:session");
+  });
+
+  it("writes tab session id to provided storage", () => {
+    const setItem = vi.fn();
+    writeTabSessionId("s_tab_2", { setItem });
+
+    expect(setItem).toHaveBeenCalledWith("local-web-terminal:session", "s_tab_2");
   });
 });
