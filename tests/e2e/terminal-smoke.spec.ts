@@ -11,7 +11,8 @@ const REQUIRED_SNAPSHOT_KEYS = [
   "gitStatusPorcelain",
   "diffStat",
   "recentErrors",
-  "tmuxPanes"
+  "tmuxPanes",
+  "panes"
 ];
 
 async function waitForSessionId(page: Page): Promise<string> {

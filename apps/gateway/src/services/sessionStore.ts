@@ -1,32 +1,10 @@
-import type { EnvContext, SessionContext } from "@local-terminal/shared";
+import type { EnvContext, PaneView, SessionContext } from "@local-terminal/shared";
 import { maskSensitive } from "@local-terminal/security";
 import type { SessionState } from "../types.js";
 import { extractRecentErrors } from "./contextCollector.js";
 
 const MAX_OUTPUT_CHUNKS = 400;
 const MAX_COMMANDS = 80;
-
-function emptyTwoPaneSnapshot() {
-  return {
-    activePaneId: "",
-    codex: {
-      id: "",
-      isActive: false,
-      lines: [],
-      role: "codex" as const,
-      errors: []
-    },
-    workspace: {
-      id: "",
-      isActive: false,
-      lines: [],
-      role: "workspace" as const,
-      workspaceKind: "unknown" as const,
-      gitSnapshot: null,
-      errors: []
-    }
-  };
-}
 
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
@@ -46,7 +24,9 @@ export class SessionStore {
       currentInput: "",
       shell: "zsh",
       cwd: process.cwd(),
-      envProbeVersion: 0
+      envProbeVersion: 0,
+      paneInteractionById: {},
+      latestPanes: []
     };
 
     this.sessions.set(sessionId, state);
@@ -130,7 +110,7 @@ export class SessionStore {
       shell: state.shell,
       recentOutput,
       lastCommands: state.lastCommands.slice(-20),
-      twoPane: emptyTwoPaneSnapshot()
+      panes: state.latestPanes.map((pane) => ({ ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] }))
     };
   }
 
@@ -171,5 +151,42 @@ export class SessionStore {
     }
 
     return state.latestEnvContext;
+  }
+
+  updatePaneInteraction(sessionId: string, paneId: string, interactedAt = Date.now()): void {
+    this.mostRecentSessionId = sessionId;
+    const state = this.sessions.get(sessionId);
+    if (!state || !paneId) {
+      return;
+    }
+
+    state.paneInteractionById[paneId] = interactedAt;
+  }
+
+  getPaneInteraction(sessionId: string, paneId: string): number | null {
+    const state = this.sessions.get(sessionId);
+    if (!state || !paneId) {
+      return null;
+    }
+
+    return state.paneInteractionById[paneId] ?? null;
+  }
+
+  setLatestPanes(sessionId: string, panes: PaneView[]): void {
+    this.mostRecentSessionId = sessionId;
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return;
+    }
+
+    state.latestPanes = panes.map((pane) => ({ ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] }));
+  }
+
+  getLatestPanes(sessionId: string): PaneView[] {
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return [];
+    }
+    return state.latestPanes;
   }
 }

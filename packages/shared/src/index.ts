@@ -15,23 +15,23 @@ export interface PaneGitSnapshot {
   summary: string | Record<string, unknown>;
 }
 
-export interface TwoPaneView {
+export type PaneRole = "workspace" | "coding_agent" | "tool";
+
+export interface PaneView {
   id: string;
   isActive: boolean;
-  title?: string;
-  cwd?: string;
+  role: PaneRole;
   lines: string[];
-  role: "codex" | "workspace";
+  cwd: string;
+  title?: string;
+  currentCommand?: string;
   errors?: string[];
+  lastInteractedAt?: number;
+  capturedAt?: number;
+  stale?: boolean;
   workspaceKind?: WorkspaceKind;
   repoRoot?: string;
   gitSnapshot?: PaneGitSnapshot | null;
-}
-
-export interface TwoPaneSnapshot {
-  activePaneId: string;
-  codex: TwoPaneView;
-  workspace: TwoPaneView;
 }
 
 export interface SessionContext {
@@ -47,12 +47,12 @@ export interface SessionContext {
   shell: string;
   recentOutput: string[];
   lastCommands: string[];
-  twoPane: TwoPaneSnapshot;
+  panes: PaneView[];
 }
 
 export interface EnvContext {
   activePaneId: string;
-  role: "codex" | "workspace";
+  role: PaneRole;
   realCwd: string;
   repoRoot: string;
   isGitRepo: boolean;

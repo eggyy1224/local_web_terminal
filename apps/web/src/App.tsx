@@ -57,45 +57,21 @@ export function createEmptyContext(): SessionContext {
     shell: "",
     recentOutput: [],
     lastCommands: [],
-    twoPane: {
-      activePaneId: "",
-      codex: {
-        id: "",
-        isActive: false,
-        lines: [],
-        role: "codex",
-        errors: []
-      },
-      workspace: {
-        id: "",
-        isActive: false,
-        lines: [],
-        role: "workspace",
-        workspaceKind: "unknown",
-        gitSnapshot: null,
-        errors: []
-      }
-    }
+    panes: []
   };
 }
 
 function flattenSnapshot(payload: SidecarPayload): FlattenedSnapshot {
   const empty = createEmptyContext();
+  const panes = Array.isArray(payload.context.panes) ? payload.context.panes : [];
   return {
     ...empty,
     ...payload.context,
-    twoPane: {
-      ...empty.twoPane,
-      ...(payload.context.twoPane ?? {}),
-      codex: {
-        ...empty.twoPane.codex,
-        ...(payload.context.twoPane?.codex ?? {})
-      },
-      workspace: {
-        ...empty.twoPane.workspace,
-        ...(payload.context.twoPane?.workspace ?? {})
-      }
-    },
+    panes: panes.map((pane) => ({
+      ...pane,
+      lines: Array.isArray(pane.lines) ? pane.lines : [],
+      errors: Array.isArray(pane.errors) ? pane.errors : []
+    })),
     updatedAt: payload.updatedAt
   };
 }
@@ -122,7 +98,7 @@ function serializeAiSnapshot(snapshot: FlattenedSnapshot, envContext: EnvContext
     sessionId: snapshot.sessionId,
     timestamp: snapshot.timestamp,
     recentErrors: snapshot.recentErrors,
-    twoPane: snapshot.twoPane,
+    panes: snapshot.panes,
     envContext,
     envContextText: envContext ? formatEnvContext(envContext) : ""
   }).replace(/</g, "\\u003c");

@@ -70,6 +70,7 @@ This repo includes a `postinstall` hook that applies `chmod +x` automatically.
   - `diffStat`
   - `recentErrors`
   - `tmuxPanes`
+  - `panes`
 
 ## Breaking Changes
 

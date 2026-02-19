@@ -72,7 +72,7 @@ describe("SessionStore", () => {
 
     store.setLatestEnvContext(sessionId, {
       activePaneId: "%2",
-      role: "codex",
+      role: "coding_agent",
       realCwd: "/tmp/new",
       repoRoot: "/tmp/new",
       isGitRepo: true,
@@ -91,7 +91,7 @@ describe("SessionStore", () => {
     const secondVersion = store.nextEnvProbeVersion(sessionId);
     store.setLatestEnvContext(sessionId, {
       activePaneId: "%3",
-      role: "codex",
+      role: "coding_agent",
       realCwd: "/tmp/latest",
       repoRoot: "/tmp/latest",
       isGitRepo: true,

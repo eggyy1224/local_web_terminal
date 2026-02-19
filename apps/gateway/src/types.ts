@@ -1,4 +1,4 @@
-import type { EnvContext } from "@local-terminal/shared";
+import type { EnvContext, PaneView } from "@local-terminal/shared";
 
 export interface PaneContext {
   cwd: string;
@@ -46,5 +46,7 @@ export interface SessionState {
   shell: string;
   cwd: string;
   envProbeVersion: number;
+  paneInteractionById: Record<string, number>;
+  latestPanes: PaneView[];
   latestEnvContext?: EnvContext;
 }

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import type { SessionContext, TwoPaneView } from "@local-terminal/shared";
+import type { PaneView, SessionContext } from "@local-terminal/shared";
 import { maskSensitive } from "@local-terminal/security";
 import { z } from "zod";
 import {
+  classifyPaneRole,
   collectGitSnapshotByRepoRoot,
-  isCodexPaneSignal,
   probeWorkspace,
   toPaneGitSnapshot
 } from "../services/contextCollector.js";
@@ -23,6 +23,7 @@ const snapshotQuerySchema = z.object({
 const contextParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 const PANE_LINES_LIMIT = Number.parseInt(process.env.SNAPSHOT_PANE_LINES ?? "200", 10) || 200;
+const PANE_STATE_TTL_MS = Number.parseInt(process.env.PANE_STATE_TTL_MS ?? "10000", 10) || 10_000;
 
 interface RouteDeps {
   adapter: TerminalAdapter;
@@ -36,39 +37,34 @@ function paneError(code: string, error: unknown, paneId?: string): string {
   return paneId ? `${code}:${paneId}${suffix}` : `${code}${suffix}`;
 }
 
-function createUnavailablePane(role: "codex" | "workspace"): TwoPaneView {
-  if (role === "workspace") {
-    return {
-      id: "",
-      isActive: false,
-      lines: [],
-      role,
-      workspaceKind: "unknown",
-      gitSnapshot: null,
-      errors: []
-    };
-  }
-
+function markPaneStale(pane: PaneView, now: number): PaneView {
+  const capturedAt = pane.capturedAt ?? 0;
   return {
-    id: "",
-    isActive: false,
-    lines: [],
-    role,
-    errors: []
+    ...pane,
+    stale: capturedAt > 0 ? now - capturedAt > PANE_STATE_TTL_MS : true
   };
 }
 
-function pickCodexPane(panes: PaneSnapshot[]): PaneSnapshot | null {
-  const codexCandidates = panes.filter((pane) =>
-    isCodexPaneSignal({
-      currentCommand: pane.currentCommand,
-      title: pane.title
-    })
-  );
-  if (codexCandidates.length === 0) {
-    return null;
-  }
-  return codexCandidates.find((pane) => pane.active) ?? codexCandidates[0];
+function sortPanes(panes: PaneView[], paneIndexById: Map<string, number>): PaneView[] {
+  return [...panes].sort((a, b) => {
+    if (a.isActive !== b.isActive) {
+      return a.isActive ? -1 : 1;
+    }
+
+    const aInteractedAt = (a.stale ?? false) ? 0 : (a.lastInteractedAt ?? 0);
+    const bInteractedAt = (b.stale ?? false) ? 0 : (b.lastInteractedAt ?? 0);
+    if (aInteractedAt !== bInteractedAt) {
+      return bInteractedAt - aInteractedAt;
+    }
+
+    if ((a.stale ?? false) !== (b.stale ?? false)) {
+      return (a.stale ?? false) ? 1 : -1;
+    }
+
+    const aIndex = paneIndexById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const bIndex = paneIndexById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    return aIndex - bIndex;
+  });
 }
 
 async function buildSessionContextSnapshot(sessionId: string, deps: RouteDeps): Promise<SessionContext | null> {
@@ -104,98 +100,127 @@ async function buildSessionContextSnapshot(sessionId: string, deps: RouteDeps): 
   let activePaneId = "";
   try {
     activePaneId = await deps.adapter.getActivePane(sessionId);
+    if (activePaneId) {
+      deps.store.updatePaneInteraction(sessionId, activePaneId, Date.now());
+    }
   } catch (error) {
     runtimeErrors.push(paneError("tmux_active_pane_failed", error));
   }
 
   let tmuxPanes: PaneSnapshot[] = [];
+  const paneIndexById = new Map<string, number>();
+  const cachedPanes = deps.store.getLatestPanes(sessionId);
+  const cachedById = new Map(cachedPanes.map((pane) => [pane.id, pane]));
   try {
     tmuxPanes = await deps.adapter.listPanes(sessionId);
+    for (const pane of tmuxPanes) {
+      paneIndexById.set(pane.id, pane.index);
+      if (pane.active) {
+        deps.store.updatePaneInteraction(sessionId, pane.id, Date.now());
+      }
+    }
   } catch (error) {
     runtimeErrors.push(paneError("tmux_list_panes_failed", error));
   }
 
-  const codexPane = pickCodexPane(tmuxPanes);
-  const workspaceCandidates = tmuxPanes.filter((pane) => !codexPane || pane.id !== codexPane.id);
-  const workspaceProbeResults = await Promise.all(
-    workspaceCandidates.map(async (pane) => ({
-      pane,
-      workspace: await probeWorkspace(pane.currentPath)
-    }))
-  );
-
-  const repoWorkspaceCandidates = workspaceProbeResults.filter(
-    (entry) => entry.workspace.kind === "git_repo_root" || entry.workspace.kind === "git_repo_subdir"
-  );
-  const pickedWorkspaceProbe =
-    repoWorkspaceCandidates.find((entry) => entry.pane.active) ?? repoWorkspaceCandidates[0] ?? workspaceProbeResults[0] ?? null;
-
-  const gitSnapshotCache = new Map<string, Awaited<ReturnType<typeof collectGitSnapshotByRepoRoot>>>();
+  const gitSnapshotCache = new Map<
+    string,
+    Promise<{ snapshot: Awaited<ReturnType<typeof collectGitSnapshotByRepoRoot>> | null; error: unknown | null }>
+  >();
   const readGitByRepoRoot = async (repoRoot: string, paneErrors: string[], paneId: string) => {
     if (!repoRoot) {
       return null;
     }
 
-    if (!gitSnapshotCache.has(repoRoot)) {
-      try {
-        const snapshot = await collectGitSnapshotByRepoRoot(repoRoot);
-        gitSnapshotCache.set(repoRoot, snapshot);
-      } catch (error) {
-        paneErrors.push(paneError("git_snapshot_failed", error, paneId));
-        return null;
-      }
+    let inFlight = gitSnapshotCache.get(repoRoot);
+    if (!inFlight) {
+      inFlight = collectGitSnapshotByRepoRoot(repoRoot)
+        .then((snapshot) => ({ snapshot, error: null }))
+        .catch((error: unknown) => ({ snapshot: null, error }));
+      gitSnapshotCache.set(repoRoot, inFlight);
     }
 
-    return gitSnapshotCache.get(repoRoot) ?? null;
+    const result = await inFlight;
+    if (result.error) {
+      paneErrors.push(paneError("git_snapshot_failed", result.error, paneId));
+      return null;
+    }
+
+    return result.snapshot;
   };
-
-  const codexView = createUnavailablePane("codex");
-  if (!codexPane) {
-    codexView.errors = ["codex_pane_unavailable"];
+  const now = Date.now();
+  let panes: PaneView[] = [];
+  if (tmuxPanes.length === 0) {
+    panes = cachedPanes.map((pane) =>
+      markPaneStale(
+        {
+          ...pane,
+          isActive: activePaneId ? pane.id === activePaneId : pane.isActive
+        },
+        now
+      )
+    );
   } else {
-    codexView.id = codexPane.id;
-    codexView.title = codexPane.title || undefined;
-    codexView.cwd = codexPane.currentPath || undefined;
-    codexView.isActive = codexPane.active || codexPane.id === activePaneId;
-    try {
-      codexView.lines = await deps.adapter.capturePaneLines(sessionId, codexPane.id, PANE_LINES_LIMIT);
-    } catch (error) {
-      codexView.lines = [];
-      codexView.errors = [paneError("tmux_capture_failed", error, codexPane.id)];
-    }
+    const workspaceByPane = new Map(
+      await Promise.all(
+        tmuxPanes.map(async (pane) => {
+          const workspace = await probeWorkspace(pane.currentPath);
+          return [pane.id, workspace] as const;
+        })
+      )
+    );
+
+    panes = await Promise.all(
+      tmuxPanes.map(async (pane) => {
+        const paneErrors: string[] = [];
+        const previous = cachedById.get(pane.id);
+        let lines = previous?.lines ?? [];
+        let capturedAt = previous?.capturedAt ?? 0;
+        try {
+          lines = await deps.adapter.capturePaneLines(sessionId, pane.id, PANE_LINES_LIMIT);
+          capturedAt = now;
+        } catch (error) {
+          paneErrors.push(paneError("tmux_capture_failed", error, pane.id));
+        }
+
+        const workspace = workspaceByPane.get(pane.id) ?? { kind: "unknown" as const, repoRoot: "" };
+        const role = classifyPaneRole({
+          currentCommand: pane.currentCommand,
+          title: pane.title,
+          lines,
+          workspaceKind: workspace.kind
+        });
+
+        const view: PaneView = {
+          id: pane.id,
+          isActive: pane.active || pane.id === activePaneId,
+          role,
+          lines,
+          cwd: pane.currentPath || "",
+          title: pane.title || undefined,
+          currentCommand: pane.currentCommand || undefined,
+          errors: paneErrors,
+          workspaceKind: workspace.kind,
+          capturedAt,
+          lastInteractedAt: deps.store.getPaneInteraction(sessionId, pane.id) ?? undefined
+        };
+
+        if (workspace.repoRoot) {
+          view.repoRoot = workspace.repoRoot;
+          const snapshot = await readGitByRepoRoot(workspace.repoRoot, paneErrors, pane.id);
+          view.gitSnapshot = snapshot ? toPaneGitSnapshot(snapshot) : null;
+        } else {
+          view.gitSnapshot = null;
+        }
+
+        return markPaneStale(view, now);
+      })
+    );
   }
 
-  const workspaceView = createUnavailablePane("workspace");
-  if (!pickedWorkspaceProbe) {
-    workspaceView.errors = ["workspace_pane_unavailable"];
-  } else {
-    const workspacePane = pickedWorkspaceProbe.pane;
-    const workspaceProbe = pickedWorkspaceProbe.workspace;
-    workspaceView.id = workspacePane.id;
-    workspaceView.title = workspacePane.title || undefined;
-    workspaceView.cwd = workspacePane.currentPath || undefined;
-    workspaceView.isActive = workspacePane.active || workspacePane.id === activePaneId;
-    workspaceView.workspaceKind = workspaceProbe.kind;
-    try {
-      workspaceView.lines = await deps.adapter.capturePaneLines(sessionId, workspacePane.id, PANE_LINES_LIMIT);
-    } catch (error) {
-      workspaceView.lines = [];
-      workspaceView.errors = [paneError("tmux_capture_failed", error, workspacePane.id)];
-    }
-
-    if (workspaceProbe.repoRoot) {
-      workspaceView.workspaceKind = workspaceProbe.kind;
-      workspaceView.repoRoot = workspaceProbe.repoRoot;
-      const errors = workspaceView.errors ?? [];
-      const snapshot = await readGitByRepoRoot(workspaceProbe.repoRoot, errors, workspacePane.id);
-      workspaceView.errors = errors;
-      workspaceView.gitSnapshot = snapshot ? toPaneGitSnapshot(snapshot) : null;
-    } else if (workspaceView.workspaceKind === "unknown") {
-      workspaceView.workspaceKind = workspacePane.currentPath ? "plain_dir" : "unknown";
-      workspaceView.gitSnapshot = null;
-    } else {
-      workspaceView.gitSnapshot = null;
-    }
+  panes = sortPanes(panes, paneIndexById);
+  if (tmuxPanes.length > 0) {
+    deps.store.setLatestPanes(sessionId, panes);
   }
 
   const legacyWorkspace = await probeWorkspace(cwd);
@@ -204,11 +229,10 @@ async function buildSessionContextSnapshot(sessionId: string, deps: RouteDeps): 
     : null;
 
   const mergedRecentErrors = [...context.recentErrors, ...runtimeErrors];
-  for (const err of codexView.errors ?? []) {
-    mergedRecentErrors.push(err);
-  }
-  for (const err of workspaceView.errors ?? []) {
-    mergedRecentErrors.push(err);
+  for (const pane of panes) {
+    for (const err of pane.errors ?? []) {
+      mergedRecentErrors.push(err);
+    }
   }
 
   return {
@@ -222,11 +246,7 @@ async function buildSessionContextSnapshot(sessionId: string, deps: RouteDeps): 
     diffStat: legacyGitSnapshot?.diffStat ?? "",
     tmuxPanes,
     recentErrors: mergedRecentErrors.slice(-20),
-    twoPane: {
-      activePaneId,
-      codex: codexView,
-      workspace: workspaceView
-    }
+    panes
   };
 }
 
@@ -273,7 +293,7 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: RouteDeps):
     reply.send({
       sessionId: snapshot.sessionId,
       timestamp: snapshot.timestamp,
-      twoPane: snapshot.twoPane,
+      panes: snapshot.panes,
       recentErrors: snapshot.recentErrors
     });
   });

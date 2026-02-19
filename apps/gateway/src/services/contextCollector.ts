@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { PaneGitSnapshot, WorkspaceKind } from "@local-terminal/shared";
+import type { PaneGitSnapshot, PaneRole, WorkspaceKind } from "@local-terminal/shared";
 
 const execFileAsync = promisify(execFile);
 
@@ -149,23 +149,65 @@ export function toPaneGitSnapshot(snapshot: GitSnapshotResult): PaneGitSnapshot 
   };
 }
 
-const CODEX_PATTERN = /\b(codex|chatgpt)\b/i;
+const CODING_AGENT_CMD_TITLE_PATTERN = /\b(codex|chatgpt|aider|cursor)\b/i;
+const CODING_AGENT_LINE_PATTERN = /\b(codex|chatgpt|aider)\b/i;
+const TOOL_PATTERN = /\b(lazygit)\b/i;
+const WORKSPACE_TITLE_PATTERN = /\b(workspace|project|repo)\b/i;
+const SHELL_PATTERN = /\b(zsh|bash|fish|sh|nu|pwsh)\b/i;
 
-export function isCodexPaneSignal(input: {
+export function isCodingAgentPaneSignal(input: {
   currentCommand: string;
   title: string;
   lines?: string[];
 }): boolean {
-  if (CODEX_PATTERN.test(input.currentCommand)) {
+  if (CODING_AGENT_CMD_TITLE_PATTERN.test(input.currentCommand)) {
     return true;
   }
-  if (CODEX_PATTERN.test(input.title)) {
+  if (CODING_AGENT_CMD_TITLE_PATTERN.test(input.title)) {
     return true;
   }
   if (!input.lines || input.lines.length === 0) {
     return false;
   }
-  return input.lines.some((line) => CODEX_PATTERN.test(line));
+  return input.lines.some((line) => CODING_AGENT_LINE_PATTERN.test(line));
+}
+
+function isToolPaneSignal(input: { currentCommand: string; title: string; lines?: string[] }): boolean {
+  if (TOOL_PATTERN.test(input.currentCommand)) {
+    return true;
+  }
+  if (TOOL_PATTERN.test(input.title)) {
+    return true;
+  }
+  if (!input.lines || input.lines.length === 0) {
+    return false;
+  }
+  return input.lines.some((line) => TOOL_PATTERN.test(line));
+}
+
+export function classifyPaneRole(input: {
+  currentCommand: string;
+  title: string;
+  lines?: string[];
+  workspaceKind?: WorkspaceKind;
+}): PaneRole {
+  if (isCodingAgentPaneSignal(input)) {
+    return "coding_agent";
+  }
+
+  if (isToolPaneSignal(input)) {
+    return "tool";
+  }
+
+  if (input.workspaceKind === "git_repo_root" || input.workspaceKind === "git_repo_subdir") {
+    return "workspace";
+  }
+
+  if (WORKSPACE_TITLE_PATTERN.test(input.title) || SHELL_PATTERN.test(input.currentCommand)) {
+    return "workspace";
+  }
+
+  return "tool";
 }
 
 const ERROR_PATTERN = /\b(error|failed|exception)\b/i;

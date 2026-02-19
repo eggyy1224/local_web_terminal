@@ -4,5 +4,5 @@
 2. Create or resume a session and run `pwd`.
 3. Verify command output appears in terminal stream.
 4. Verify hidden snapshot scripts exist (`#snapshot-json` + `#ai-context-sidecar`) and both are valid JSON.
-5. Verify snapshot `context` includes `timestamp`, `cwd`, `repoRoot`, `branch`, `gitStatusPorcelain`, `diffStat`, `recentErrors`, `tmuxPanes`.
+5. Verify snapshot `context` includes `timestamp`, `cwd`, `repoRoot`, `branch`, `gitStatusPorcelain`, `diffStat`, `recentErrors`, `tmuxPanes`, `panes`.
 6. Reload page and verify reconnect behavior still works.

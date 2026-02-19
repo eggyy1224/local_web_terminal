@@ -269,6 +269,136 @@ describe("registerWsRoutes", () => {
     expect(socket.sent.some((raw) => JSON.parse(raw).type === "stdout")).toBe(true);
   });
 
+  it("classifies active repo pane with non-shell command as workspace", async () => {
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+
+    const probeActiveEnvironment = vi.fn(async () => ({
+      activePaneId: "%1",
+      paneCurrentPath: process.cwd(),
+      paneCurrentCommand: "npm",
+      paneTitle: "",
+      tmux: {
+        session: "s_test",
+        window: "0",
+        pane: "1"
+      },
+      repoRoot: process.cwd(),
+      isGitRepo: true
+    }));
+
+    const listPanes = vi.fn(async () =>
+      [
+        {
+          id: "%1",
+          index: 0,
+          title: "",
+          active: true,
+          currentPath: process.cwd(),
+          currentCommand: "npm"
+        }
+      ] satisfies PaneSnapshot[]
+    );
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter({ probeActiveEnvironment, listPanes }),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId: "s_ws_role_workspace" }
+    });
+
+    socket.emit("message", JSON.stringify({ type: "stdin", data: "echo test\r" }));
+
+    await waitFor(() =>
+      socket.sent.some((raw) => {
+        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+      })
+    );
+
+    const meta = socket.sent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { kind?: string; env?: { role?: string } } })
+      .find((item) => item.type === "meta" && item.data?.kind === "env_probe");
+    expect(meta?.data?.env?.role).toBe("workspace");
+  });
+
+  it("prefers activePaneId over pane.active when inferring role", async () => {
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+
+    const probeActiveEnvironment = vi.fn(async () => ({
+      activePaneId: "%2",
+      paneCurrentPath: process.cwd(),
+      paneCurrentCommand: "codex",
+      paneTitle: "",
+      tmux: {
+        session: "s_test",
+        window: "0",
+        pane: "2"
+      },
+      repoRoot: process.cwd(),
+      isGitRepo: true
+    }));
+
+    const listPanes = vi.fn(async () =>
+      [
+        {
+          id: "%1",
+          index: 0,
+          title: "workspace",
+          active: true,
+          currentPath: process.cwd(),
+          currentCommand: "zsh"
+        },
+        {
+          id: "%2",
+          index: 1,
+          title: "codex",
+          active: false,
+          currentPath: process.cwd(),
+          currentCommand: "codex"
+        }
+      ] satisfies PaneSnapshot[]
+    );
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter({ probeActiveEnvironment, listPanes }),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId: "s_ws_role_prefers_active_pane_id" }
+    });
+
+    socket.emit("message", JSON.stringify({ type: "stdin", data: "echo test\r" }));
+
+    await waitFor(() =>
+      socket.sent.some((raw) => {
+        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+      })
+    );
+
+    const meta = socket.sent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { kind?: string; env?: { role?: string } } })
+      .find((item) => item.type === "meta" && item.data?.kind === "env_probe");
+    expect(meta?.data?.env?.role).toBe("coding_agent");
+  });
+
   it("kills pty when websocket closes", async () => {
     const app = new FakeApp();
     const store = new SessionStore();

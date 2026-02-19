@@ -95,7 +95,7 @@ async function buildTestApp(adapter: TerminalAdapter, store: SessionStore) {
 }
 
 describe("GET /api/context/:sessionId", () => {
-  it("returns required snapshot context fields with twoPane payload", async () => {
+  it("returns required snapshot context fields with panes payload", async () => {
     const store = new SessionStore();
     const sessionId = "s_ctx_fields";
     store.ensure(sessionId);
@@ -142,16 +142,16 @@ describe("GET /api/context/:sessionId", () => {
     expect(typeof parsed.diffStat).toBe("string");
     expect(Array.isArray(parsed.recentErrors)).toBe(true);
     expect(Array.isArray(parsed.tmuxPanes)).toBe(true);
-    const twoPane = parsed.twoPane;
-    expect(typeof twoPane.activePaneId).toBe("string");
-    expect(twoPane.codex.role).toBe("codex");
-    expect(Array.isArray(twoPane.codex.lines)).toBe(true);
-    expect(twoPane.codex.id).toBe("%1");
-    expect(twoPane.workspace.role).toBe("workspace");
-    expect(Array.isArray(twoPane.workspace.lines)).toBe(true);
-    expect(twoPane.workspace.id).toBe("%2");
-    expect(typeof twoPane.workspace.repoRoot).toBe("string");
-    expect(twoPane.workspace.gitSnapshot).toBeTruthy();
+    expect(Array.isArray(parsed.panes)).toBe(true);
+    expect(parsed.panes).toHaveLength(2);
+    const codingPane = parsed.panes.find((pane) => pane.id === "%1");
+    const workspacePane = parsed.panes.find((pane) => pane.id === "%2");
+    expect(codingPane?.role).toBe("coding_agent");
+    expect(Array.isArray(codingPane?.lines)).toBe(true);
+    expect(workspacePane?.role).toBe("workspace");
+    expect(Array.isArray(workspacePane?.lines)).toBe(true);
+    expect(typeof workspacePane?.repoRoot).toBe("string");
+    expect(workspacePane?.gitSnapshot).toBeTruthy();
   });
 
   it("prefers active repo workspace pane when multiple repo candidates exist", async () => {
@@ -201,14 +201,32 @@ describe("GET /api/context/:sessionId", () => {
 
     expect(response.statusCode).toBe(200);
     const parsed = response.json() as SessionContext;
-    expect(parsed.twoPane.workspace.id).toBe("%3");
-    expect(parsed.twoPane.workspace.isActive).toBe(true);
+    expect(parsed.panes[0]?.id).toBe("%3");
+    expect(parsed.panes[0]?.isActive).toBe(true);
   });
 
   it("keeps endpoint available when pane and pane-list collection fail", async () => {
     const store = new SessionStore();
     const sessionId = "s_ctx_fallback";
     store.ensure(sessionId);
+    store.setLatestPanes(sessionId, [
+      {
+        id: "%9",
+        isActive: false,
+        role: "workspace",
+        lines: ["cached workspace"],
+        cwd: process.cwd(),
+        capturedAt: Date.now() - 20_000
+      },
+      {
+        id: "%8",
+        isActive: true,
+        role: "coding_agent",
+        lines: ["cached coding agent"],
+        cwd: process.cwd(),
+        capturedAt: Date.now() - 20_000
+      }
+    ]);
     const adapter = makeAdapter({
       activePaneError: true,
       paneContextError: true,
@@ -228,13 +246,54 @@ describe("GET /api/context/:sessionId", () => {
     expect(parsed.tmuxPanes).toEqual([]);
     expect(typeof parsed.gitStatusPorcelain).toBe("string");
     expect(typeof parsed.diffStat).toBe("string");
-    expect(Array.isArray(parsed.twoPane.codex.lines)).toBe(true);
-    expect(Array.isArray(parsed.twoPane.workspace.lines)).toBe(true);
-    expect(parsed.twoPane.codex.lines).toEqual([]);
-    expect(parsed.twoPane.workspace.lines).toEqual([]);
-    expect((parsed.twoPane.codex.errors ?? []).length).toBeGreaterThan(0);
-    expect((parsed.twoPane.workspace.errors ?? []).length).toBeGreaterThan(0);
+    expect(parsed.panes).toHaveLength(2);
+    expect(parsed.panes.every((pane) => pane.stale)).toBe(true);
+    expect(parsed.panes[0]?.id).toBe("%8");
     expect(parsed.recentErrors.some((item) => item.includes("tmux_list_panes_failed"))).toBe(true);
+  });
+
+  it("reconciles cached pane activity with latest active pane when pane list fails", async () => {
+    const store = new SessionStore();
+    const sessionId = "s_ctx_fallback_active_refresh";
+    store.ensure(sessionId);
+    store.setLatestPanes(sessionId, [
+      {
+        id: "%9",
+        isActive: true,
+        role: "workspace",
+        lines: ["cached workspace"],
+        cwd: process.cwd(),
+        capturedAt: Date.now() - 20_000
+      },
+      {
+        id: "%8",
+        isActive: false,
+        role: "coding_agent",
+        lines: ["cached coding agent"],
+        cwd: process.cwd(),
+        capturedAt: Date.now() - 20_000
+      }
+    ]);
+    const adapter = makeAdapter({
+      activePaneId: "%8",
+      paneContextError: true,
+      panesError: true
+    });
+    const app = await buildTestApp(adapter, store);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/context/${sessionId}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = response.json() as SessionContext;
+    expect(parsed.panes).toHaveLength(2);
+    expect(parsed.panes.every((pane) => pane.stale)).toBe(true);
+    expect(parsed.panes[0]?.id).toBe("%8");
+    expect(parsed.panes[0]?.isActive).toBe(true);
+    expect(parsed.panes[1]?.id).toBe("%9");
+    expect(parsed.panes[1]?.isActive).toBe(false);
   });
 
   it("returns pane-level errors when line capture fails", async () => {
@@ -271,17 +330,17 @@ describe("GET /api/context/:sessionId", () => {
 
     expect(response.statusCode).toBe(200);
     const parsed = response.json() as SessionContext;
-    expect(parsed.twoPane.codex.lines).toEqual([]);
-    expect(parsed.twoPane.workspace.lines).toEqual([]);
-    expect((parsed.twoPane.codex.errors ?? []).some((item) => item.includes("tmux_capture_failed"))).toBe(true);
-    expect((parsed.twoPane.workspace.errors ?? []).some((item) => item.includes("tmux_capture_failed"))).toBe(
-      true
-    );
+    expect(parsed.panes).toHaveLength(2);
+    expect(parsed.panes[0]?.lines).toEqual([]);
+    expect(parsed.panes[1]?.lines).toEqual([]);
+    expect(parsed.panes.every((pane) => pane.stale)).toBe(true);
+    expect((parsed.panes[0]?.errors ?? []).some((item) => item.includes("tmux_capture_failed"))).toBe(true);
+    expect((parsed.panes[1]?.errors ?? []).some((item) => item.includes("tmux_capture_failed"))).toBe(true);
   });
 });
 
 describe("GET /__snapshot.json", () => {
-  it("returns twoPane snapshot for most recent session", async () => {
+  it("returns panes snapshot for most recent session", async () => {
     const store = new SessionStore();
     const sessionId = "s_sidecar_latest";
     store.ensure(sessionId);
@@ -320,12 +379,9 @@ describe("GET /__snapshot.json", () => {
     const parsed = response.json() as Record<string, unknown>;
     expect(typeof parsed.sessionId).toBe("string");
     expect(typeof parsed.timestamp).toBe("number");
-    const twoPane = parsed.twoPane as Record<string, unknown>;
-    expect(twoPane).toBeTruthy();
-    const codex = twoPane.codex as Record<string, unknown>;
-    const workspace = twoPane.workspace as Record<string, unknown>;
-    expect(Array.isArray(codex.lines)).toBe(true);
-    expect(Array.isArray(workspace.lines)).toBe(true);
+    const panes = parsed.panes as unknown[];
+    expect(Array.isArray(panes)).toBe(true);
+    expect(panes).toHaveLength(2);
   });
 
   it("returns 404 when no known session is available", async () => {

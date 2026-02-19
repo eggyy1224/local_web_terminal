@@ -76,16 +76,13 @@ describe("App snapshot sidecar", () => {
     expect(primary.textContent).toBe(alias.textContent);
     expect(primary.textContent.includes("<")).toBe(false);
     const parsed = JSON.parse(primary.textContent) as Record<string, unknown>;
-    expect(parsed).toHaveProperty("twoPane");
-    const twoPane = parsed.twoPane as Record<string, unknown>;
-    const codex = twoPane.codex as Record<string, unknown>;
-    const workspace = twoPane.workspace as Record<string, unknown>;
-    expect(Array.isArray(codex.lines)).toBe(true);
-    expect(Array.isArray(workspace.lines)).toBe(true);
+    expect(parsed).toHaveProperty("panes");
+    const panes = parsed.panes as unknown[];
+    expect(Array.isArray(panes)).toBe(true);
 
     expect(aiSnapshot.textContent.includes("<")).toBe(false);
     const parsedAi = JSON.parse(aiSnapshot.textContent) as Record<string, unknown>;
-    expect(parsedAi).toHaveProperty("twoPane");
+    expect(parsedAi).toHaveProperty("panes");
   });
 
   it("injects hidden env context only into ai snapshot payload", () => {
@@ -113,7 +110,7 @@ describe("App snapshot sidecar", () => {
         updatedAt: 456,
         envContext: {
           activePaneId: "%33",
-          role: "codex",
+          role: "coding_agent",
           realCwd: "/tmp/workspace",
           repoRoot: "/tmp/workspace",
           isGitRepo: true,

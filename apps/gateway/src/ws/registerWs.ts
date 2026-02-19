@@ -2,10 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import pty from "node-pty";
-import type { EnvContext } from "@local-terminal/shared";
+import type { EnvContext, PaneRole } from "@local-terminal/shared";
 import { z } from "zod";
 import { attachCommand } from "../adapters/tmuxAdapter.js";
-import { isCodexPaneSignal } from "../services/contextCollector.js";
+import { classifyPaneRole, probeWorkspace } from "../services/contextCollector.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import type { PaneSnapshot, TerminalAdapter } from "../types.js";
 import { isLoopbackOrigin } from "../utils/origin.js";
@@ -47,33 +47,30 @@ export async function registerWsRoutes(
 
   const hasSubmitBoundary = (data: string): boolean => data.includes("\r") || data.includes("\n");
 
-  const resolveRole = (
+  const resolveRole = async (
     activePaneId: string,
     panes: PaneSnapshot[],
-    fallback: { currentCommand: string; title: string }
-  ): "codex" | "workspace" => {
-    const codexCandidates = panes.filter((pane) =>
-      isCodexPaneSignal({
-        currentCommand: pane.currentCommand,
-        title: pane.title
-      })
-    );
-    const codexPane =
-      codexCandidates.find((pane) => pane.active || pane.id === activePaneId) ?? codexCandidates[0] ?? null;
-    if (codexPane && codexPane.id === activePaneId) {
-      return "codex";
+    fallback: { currentCommand: string; title: string; currentPath: string }
+  ): Promise<PaneRole> => {
+    const activePane =
+      panes.find((pane) => pane.id === activePaneId) ??
+      panes.find((pane) => pane.active) ??
+      null;
+    if (activePane) {
+      const workspace = await probeWorkspace(activePane.currentPath);
+      return classifyPaneRole({
+        currentCommand: activePane.currentCommand,
+        title: activePane.title,
+        workspaceKind: workspace.kind
+      });
     }
 
-    if (
-      isCodexPaneSignal({
-        currentCommand: fallback.currentCommand,
-        title: fallback.title
-      })
-    ) {
-      return "codex";
-    }
-
-    return "workspace";
+    const workspace = await probeWorkspace(fallback.currentPath);
+    return classifyPaneRole({
+      currentCommand: fallback.currentCommand,
+      title: fallback.title,
+      workspaceKind: workspace.kind
+    });
   };
 
   app.get("/ws/sessions/:sessionId/stream", { websocket: true }, (socket, request) => {
@@ -98,20 +95,21 @@ export async function registerWsRoutes(
       try {
         const probeTarget = (await probeTargetPromise) ?? sessionId;
         const raw = await deps.adapter.probeActiveEnvironment(sessionId, probeTarget);
-        let role: "codex" | "workspace" = "workspace";
+        let role: PaneRole = "tool";
         try {
           const panes = await deps.adapter.listPanes(sessionId, probeTarget);
-          role = resolveRole(raw.activePaneId, panes, {
+          role = await resolveRole(raw.activePaneId, panes, {
             currentCommand: raw.paneCurrentCommand,
-            title: raw.paneTitle
+            title: raw.paneTitle,
+            currentPath: raw.paneCurrentPath
           });
         } catch {
-          role = isCodexPaneSignal({
+          const workspace = await probeWorkspace(raw.paneCurrentPath);
+          role = classifyPaneRole({
             currentCommand: raw.paneCurrentCommand,
-            title: raw.paneTitle
-          })
-            ? "codex"
-            : "workspace";
+            title: raw.paneTitle,
+            workspaceKind: workspace.kind
+          });
         }
 
         const env: EnvContext = {
