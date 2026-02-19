@@ -113,6 +113,13 @@ export function App() {
     }
   }, []);
 
+  const handleBootstrapTimeout = useCallback(
+    async (nextSessionId: string) => {
+      await refreshContext(nextSessionId);
+    },
+    [refreshContext]
+  );
+
   const { sendMessage } = useWsStream({
     gatewayBase: GATEWAY_BASE,
     sessionId,
@@ -121,9 +128,7 @@ export function App() {
     onStdout,
     onContextSnapshot,
     onEnvProbe,
-    onBootstrapTimeout: async (nextSessionId) => {
-      await refreshContext(nextSessionId);
-    },
+    onBootstrapTimeout: handleBootstrapTimeout,
     disposedRef
   });
 

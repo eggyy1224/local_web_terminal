@@ -168,6 +168,13 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("sessionId !== targetSessionId")).toBe(true);
   });
 
+  it("uses a stable bootstrap-timeout callback for ws hook", () => {
+    const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
+    const source = fs.readFileSync(appSourcePath, "utf8");
+    expect(source.includes("const handleBootstrapTimeout = useCallback")).toBe(true);
+    expect(source.includes("onBootstrapTimeout: handleBootstrapTimeout")).toBe(true);
+  });
+
   it("merges incoming context with required defaults", () => {
     const merged = mergeIncomingContext({
       timestamp: 42,

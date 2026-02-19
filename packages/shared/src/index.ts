@@ -126,6 +126,10 @@ function isPaneRole(value: unknown): value is PaneRole {
   return value === "workspace" || value === "coding_agent" || value === "tool";
 }
 
+function isContextSnapshotReason(value: unknown): value is ContextSnapshotReason {
+  return value === "connect" || value === "stdout" || value === "submit" || value === "resize" || value === "heartbeat";
+}
+
 function isWorkspaceKind(value: unknown): value is WorkspaceKind {
   return value === "git_repo_root" || value === "git_repo_subdir" || value === "plain_dir" || value === "unknown";
 }
@@ -276,7 +280,11 @@ export function isWsServerMessage(value: unknown): value is WsServerMessage {
   }
 
   if (value.data.kind === "context_snapshot") {
-    return isSessionContext(value.data.snapshot) && isInteger(value.data.updatedAt);
+    return (
+      isSessionContext(value.data.snapshot) &&
+      isInteger(value.data.updatedAt) &&
+      isContextSnapshotReason(value.data.reason)
+    );
   }
 
   return false;

@@ -24,6 +24,18 @@ export class SessionStore {
     state.lastSeenAt = Date.now();
   }
 
+  private recomputeMostRecentSessionId(): void {
+    let candidateSessionId: string | null = null;
+    let bestLastSeenAt = -1;
+    for (const [sessionId, state] of this.sessions) {
+      if (state.lastSeenAt > bestLastSeenAt) {
+        bestLastSeenAt = state.lastSeenAt;
+        candidateSessionId = sessionId;
+      }
+    }
+    this.mostRecentSessionId = candidateSessionId;
+  }
+
   ensure(sessionId: string): SessionState {
     this.mostRecentSessionId = sessionId;
     const existing = this.sessions.get(sessionId);
@@ -218,14 +230,19 @@ export class SessionStore {
   }
 
   release(sessionId: string): void {
-    this.sessions.delete(sessionId);
+    const removed = this.sessions.delete(sessionId);
+    if (!removed) {
+      return;
+    }
+
     if (this.mostRecentSessionId === sessionId) {
-      this.mostRecentSessionId = null;
+      this.recomputeMostRecentSessionId();
     }
   }
 
   pruneExpiredSessions(now = Date.now()): string[] {
     const removed: string[] = [];
+    let removedMostRecent = false;
     for (const [sessionId, state] of this.sessions) {
       if (now - state.lastSeenAt <= this.sessionTtlMs) {
         continue;
@@ -233,9 +250,14 @@ export class SessionStore {
       this.sessions.delete(sessionId);
       removed.push(sessionId);
       if (this.mostRecentSessionId === sessionId) {
-        this.mostRecentSessionId = null;
+        removedMostRecent = true;
       }
     }
+
+    if (removedMostRecent) {
+      this.recomputeMostRecentSessionId();
+    }
+
     return removed;
   }
 }

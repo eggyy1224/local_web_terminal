@@ -115,7 +115,6 @@ export async function registerWsRoutes(
 
     socket.on("close", () => {
       contextPush.dispose();
-      deps.store.release(sessionId);
       term.kill();
     });
   });

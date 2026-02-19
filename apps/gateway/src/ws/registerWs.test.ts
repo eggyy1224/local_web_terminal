@@ -585,7 +585,7 @@ describe("registerWsRoutes", () => {
 
     socket.close();
     expect(term.kill).toHaveBeenCalledTimes(1);
-    expect(store.getContext("s_ws_close")).toBeNull();
+    expect(store.getContext("s_ws_close")).toBeTruthy();
   });
 
   it("stops heartbeat-driven pushes after websocket closes", async () => {

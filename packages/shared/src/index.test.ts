@@ -105,5 +105,54 @@ describe("shared runtime contracts", () => {
         }
       })
     ).toBeNull();
+    expect(
+      parseWsServerMessage({
+        type: "meta",
+        data: {
+          kind: "context_snapshot",
+          updatedAt: 1,
+          snapshot: {
+            timestamp: 1,
+            sessionId: "s_1",
+            cwd: "/tmp",
+            repoRoot: "",
+            branch: "",
+            gitStatusPorcelain: "",
+            diffStat: "",
+            recentErrors: [],
+            tmuxPanes: [],
+            shell: "zsh",
+            recentOutput: [],
+            lastCommands: [],
+            panes: []
+          }
+        }
+      })
+    ).toBeNull();
+    expect(
+      parseWsServerMessage({
+        type: "meta",
+        data: {
+          kind: "context_snapshot",
+          reason: "wrong_reason",
+          updatedAt: 1,
+          snapshot: {
+            timestamp: 1,
+            sessionId: "s_1",
+            cwd: "/tmp",
+            repoRoot: "",
+            branch: "",
+            gitStatusPorcelain: "",
+            diffStat: "",
+            recentErrors: [],
+            tmuxPanes: [],
+            shell: "zsh",
+            recentOutput: [],
+            lastCommands: [],
+            panes: []
+          }
+        }
+      })
+    ).toBeNull();
   });
 });

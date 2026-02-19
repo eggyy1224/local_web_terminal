@@ -120,6 +120,19 @@ describe("SessionStore", () => {
     expect(store.getContext(sessionId)).toBeNull();
   });
 
+  it("falls back to another existing session when releasing most recent session", () => {
+    const store = new SessionStore();
+    const sessionA = "s_store_a";
+    const sessionB = "s_store_b";
+    store.ensure(sessionA);
+    store.ensure(sessionB);
+    expect(store.getMostRecentSessionId()).toBe(sessionB);
+
+    store.release(sessionB);
+    expect(store.getMostRecentSessionId()).toBe(sessionA);
+    expect(store.getContext(sessionA)).toBeTruthy();
+  });
+
   it("prunes sessions by ttl", () => {
     let now = 1_000;
     const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
