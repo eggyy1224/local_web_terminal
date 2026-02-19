@@ -47,6 +47,8 @@ Gateway runs on [http://127.0.0.1:8787](http://127.0.0.1:8787)
 - `CONTEXT_PUSH_DEBOUNCE_MS` default `300`
 - `CONTEXT_PUSH_HEARTBEAT_MS` default `15000`
 - `VITE_CONTEXT_BOOTSTRAP_TIMEOUT_MS` default `1500`
+- `SESSION_TTL_MS` default `1800000`
+- `SESSION_PRUNE_INTERVAL_MS` default `60000`
 
 ## macOS note (node-pty)
 

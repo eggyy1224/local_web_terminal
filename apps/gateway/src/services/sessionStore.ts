@@ -5,15 +5,30 @@ import { extractRecentErrors } from "./contextCollector.js";
 
 const MAX_OUTPUT_CHUNKS = 400;
 const MAX_COMMANDS = 80;
+const DEFAULT_SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS ?? "1800000", 10) || 1_800_000;
 
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
   private mostRecentSessionId: string | null = null;
+  private readonly sessionTtlMs: number;
+
+  constructor(sessionTtlMs = DEFAULT_SESSION_TTL_MS) {
+    this.sessionTtlMs = sessionTtlMs;
+  }
+
+  private touchSession(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return;
+    }
+    state.lastSeenAt = Date.now();
+  }
 
   ensure(sessionId: string): SessionState {
     this.mostRecentSessionId = sessionId;
     const existing = this.sessions.get(sessionId);
     if (existing) {
+      this.touchSession(sessionId);
       return existing;
     }
 
@@ -24,6 +39,7 @@ export class SessionStore {
       currentInput: "",
       shell: "zsh",
       cwd: process.cwd(),
+      lastSeenAt: Date.now(),
       envProbeVersion: 0,
       paneInteractionById: {},
       latestPanes: []
@@ -40,6 +56,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     state.outputChunks.push(chunk);
     if (state.outputChunks.length > MAX_OUTPUT_CHUNKS) {
       state.outputChunks.splice(0, state.outputChunks.length - MAX_OUTPUT_CHUNKS);
@@ -53,6 +70,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     for (const ch of incoming) {
       if (ch === "\u007f") {
         state.currentInput = state.currentInput.slice(0, -1);
@@ -84,6 +102,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     state.cwd = context.cwd;
     state.shell = context.shell;
   }
@@ -94,6 +113,7 @@ export class SessionStore {
       return null;
     }
 
+    this.touchSession(sessionId);
     const recentOutput = state.outputChunks.slice(-50).map((chunk) => maskSensitive(chunk));
     const recentErrors = extractRecentErrors(recentOutput);
 
@@ -125,6 +145,7 @@ export class SessionStore {
       return 0;
     }
 
+    this.touchSession(sessionId);
     state.envProbeVersion += 1;
     return state.envProbeVersion;
   }
@@ -136,6 +157,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     if (env.version < state.envProbeVersion) {
       return;
     }
@@ -150,6 +172,7 @@ export class SessionStore {
       return null;
     }
 
+    this.touchSession(sessionId);
     return state.latestEnvContext;
   }
 
@@ -160,6 +183,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     state.paneInteractionById[paneId] = interactedAt;
   }
 
@@ -169,6 +193,7 @@ export class SessionStore {
       return null;
     }
 
+    this.touchSession(sessionId);
     return state.paneInteractionById[paneId] ?? null;
   }
 
@@ -179,6 +204,7 @@ export class SessionStore {
       return;
     }
 
+    this.touchSession(sessionId);
     state.latestPanes = panes.map((pane) => ({ ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] }));
   }
 
@@ -187,6 +213,29 @@ export class SessionStore {
     if (!state) {
       return [];
     }
+    this.touchSession(sessionId);
     return state.latestPanes;
+  }
+
+  release(sessionId: string): void {
+    this.sessions.delete(sessionId);
+    if (this.mostRecentSessionId === sessionId) {
+      this.mostRecentSessionId = null;
+    }
+  }
+
+  pruneExpiredSessions(now = Date.now()): string[] {
+    const removed: string[] = [];
+    for (const [sessionId, state] of this.sessions) {
+      if (now - state.lastSeenAt <= this.sessionTtlMs) {
+        continue;
+      }
+      this.sessions.delete(sessionId);
+      removed.push(sessionId);
+      if (this.mostRecentSessionId === sessionId) {
+        this.mostRecentSessionId = null;
+      }
+    }
+    return removed;
   }
 }

@@ -45,6 +45,7 @@ export interface SessionState {
   currentInput: string;
   shell: string;
   cwd: string;
+  lastSeenAt: number;
   envProbeVersion: number;
   paneInteractionById: Record<string, number>;
   latestPanes: PaneView[];

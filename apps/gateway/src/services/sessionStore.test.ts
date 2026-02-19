@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SessionStore } from "./sessionStore.js";
 
 function appendCommand(store: SessionStore, sessionId: string, command: string): void {
@@ -107,5 +107,40 @@ describe("SessionStore", () => {
     const latest = store.getLatestEnvContext(sessionId);
     expect(latest?.activePaneId).toBe("%3");
     expect(latest?.version).toBe(secondVersion);
+  });
+
+  it("releases session explicitly", () => {
+    const store = new SessionStore();
+    const sessionId = "s_store_release";
+    store.ensure(sessionId);
+    store.appendStdout(sessionId, "line");
+
+    expect(store.getContext(sessionId)).toBeTruthy();
+    store.release(sessionId);
+    expect(store.getContext(sessionId)).toBeNull();
+  });
+
+  it("prunes sessions by ttl", () => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const store = new SessionStore(50);
+      const oldSessionId = "s_store_old";
+      const freshSessionId = "s_store_fresh";
+      store.ensure(oldSessionId);
+      now = 1_020;
+      store.ensure(freshSessionId);
+      now = 1_030;
+      store.appendStdout(freshSessionId, "still-active");
+
+      now = 1_070;
+      const removed = store.pruneExpiredSessions();
+      expect(removed).toContain(oldSessionId);
+      expect(removed).not.toContain(freshSessionId);
+      expect(store.getContext(oldSessionId)).toBeNull();
+      expect(store.getContext(freshSessionId)).toBeTruthy();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });

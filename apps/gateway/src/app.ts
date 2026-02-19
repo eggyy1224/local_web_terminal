@@ -6,6 +6,7 @@ import { TmuxAdapter } from "./adapters/tmuxAdapter.js";
 import { registerHttpRoutes } from "./routes/httpRoutes.js";
 import { SessionStore } from "./services/sessionStore.js";
 import { isLoopbackOrigin } from "./utils/origin.js";
+import { createAppLogger } from "./utils/logger.js";
 import { registerWsRoutes } from "./ws/registerWs.js";
 
 function parseOrigins(raw = process.env.ORIGIN_WHITELIST ?? LOCAL_ORIGIN_DEFAULT): Set<string> {
@@ -47,9 +48,27 @@ export async function buildApp() {
 
   const adapter = new TmuxAdapter();
   const store = new SessionStore();
+  const logger = createAppLogger(app.log);
+  const sessionPruneIntervalMs = Number.parseInt(process.env.SESSION_PRUNE_INTERVAL_MS ?? "60000", 10) || 60_000;
+  const pruneTimer = setInterval(() => {
+    const removed = store.pruneExpiredSessions();
+    if (removed.length > 0) {
+      logger.warn({
+        code: "session_pruned",
+        details: {
+          count: removed.length,
+          sessionIds: removed
+        }
+      });
+    }
+  }, sessionPruneIntervalMs);
+  pruneTimer.unref();
+  app.addHook("onClose", async () => {
+    clearInterval(pruneTimer);
+  });
 
-  await registerHttpRoutes(app, { adapter, store });
-  await registerWsRoutes(app, { adapter, store, originAllowList });
+  await registerHttpRoutes(app, { adapter, store, logger });
+  await registerWsRoutes(app, { adapter, store, logger, originAllowList });
 
   return app;
 }
