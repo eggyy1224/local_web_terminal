@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { assertRawTmuxTarget, normalizeUpstreamPaneTarget } from "../services/paneTargetNormalizer.js";
 import type { ActiveEnvironmentProbe, PaneContext, PaneSnapshot, TerminalAdapter } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 const PROBE_EXEC_TIMEOUT_MS = Number.parseInt(process.env.ENV_PROBE_TIMEOUT_MS ?? "180", 10) || 180;
+const TMUX_FIELD_SEPARATOR = "\u001f";
+const TMUX_ESCAPED_FIELD_SEPARATOR = "\\037";
 
 function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -15,6 +18,53 @@ function normalizeCapturedLines(raw: string): string[] {
     lines.pop();
   }
   return lines;
+}
+
+function splitTmuxFields(value: string, expectedFields?: number): string[] {
+  if (value.includes(TMUX_FIELD_SEPARATOR)) {
+    return value
+      .split(TMUX_FIELD_SEPARATOR)
+      .map((field) => field.replaceAll(TMUX_ESCAPED_FIELD_SEPARATOR, TMUX_FIELD_SEPARATOR));
+  }
+
+  if (!value.includes(TMUX_ESCAPED_FIELD_SEPARATOR)) {
+    return [value];
+  }
+
+  const delimiter = TMUX_ESCAPED_FIELD_SEPARATOR;
+  const escapedDelimiter = `\\${TMUX_ESCAPED_FIELD_SEPARATOR}`;
+  const fields: string[] = [];
+  let buffer = "";
+  let index = 0;
+
+  while (index < value.length) {
+    if (value.startsWith(escapedDelimiter, index)) {
+      buffer += TMUX_FIELD_SEPARATOR;
+      index += escapedDelimiter.length;
+      continue;
+    }
+
+    if (value.startsWith(delimiter, index)) {
+      fields.push(buffer);
+      buffer = "";
+      index += delimiter.length;
+      continue;
+    }
+
+    buffer += value[index] ?? "";
+    index += 1;
+  }
+
+  fields.push(buffer);
+  if (expectedFields && fields.length !== expectedFields) {
+    return [value];
+  }
+
+  return fields;
+}
+
+export function normalizeTmuxPaneTarget(rawTarget: string): string {
+  return assertRawTmuxTarget(rawTarget);
 }
 
 export class TmuxAdapter implements TerminalAdapter {
@@ -47,7 +97,7 @@ export class TmuxAdapter implements TerminalAdapter {
   async getActivePane(sessionId: string): Promise<string> {
     const clean = sanitizeSessionId(sessionId);
     const { stdout } = await execFileAsync(this.tmuxBin, ["display-message", "-p", "-t", clean, "#{pane_id}"]);
-    return stdout.trim();
+    return normalizeTmuxPaneTarget(stdout);
   }
 
   async getPaneContext(sessionId: string): Promise<PaneContext> {
@@ -84,7 +134,7 @@ export class TmuxAdapter implements TerminalAdapter {
     );
 
     const [clientSession, sessionName, tmuxWindow, activePaneId, tmuxPane, paneCurrentPath, paneCurrentCommand, paneTitle] =
-      stdout.trim().split("\u001f");
+      splitTmuxFields(stdout.trim(), 8);
     const tmuxSession = (clientSession ?? "").trim() || (sessionName ?? "").trim();
 
     const realCwd = (paneCurrentPath ?? "").trim();
@@ -106,7 +156,7 @@ export class TmuxAdapter implements TerminalAdapter {
     }
 
     return {
-      activePaneId: (activePaneId ?? "").trim(),
+      activePaneId: activePaneId ? normalizeTmuxPaneTarget(normalizeUpstreamPaneTarget(activePaneId)) : "",
       paneCurrentPath: realCwd,
       paneCurrentCommand: (paneCurrentCommand ?? "").trim(),
       paneTitle: (paneTitle ?? "").trim(),
@@ -137,9 +187,9 @@ export class TmuxAdapter implements TerminalAdapter {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [id, indexRaw, activeRaw, title, currentPath, currentCommand] = line.split("\u001f");
+        const [id, indexRaw, activeRaw, title, currentPath, currentCommand] = splitTmuxFields(line, 6);
         return {
-          id: id ?? "",
+          id: normalizeTmuxPaneTarget(normalizeUpstreamPaneTarget(id ?? "")),
           index: Number.parseInt(indexRaw ?? "0", 10) || 0,
           active: activeRaw === "1",
           title: title ?? "",
@@ -151,15 +201,24 @@ export class TmuxAdapter implements TerminalAdapter {
 
   async capturePaneLines(sessionId: string, paneId: string, limit: number): Promise<string[]> {
     const captureStart = Math.max(0, limit - 1);
-    const { stdout } = await execFileAsync(this.tmuxBin, [
-      "capture-pane",
-      "-p",
-      "-t",
-      paneId,
-      "-S",
-      `-${captureStart}`
-    ]);
-    return normalizeCapturedLines(stdout);
+    const tmuxTarget = normalizeTmuxPaneTarget(normalizeUpstreamPaneTarget(paneId));
+    try {
+      const { stdout } = await execFileAsync(this.tmuxBin, [
+        "capture-pane",
+        "-p",
+        "-t",
+        tmuxTarget,
+        "-S",
+        `-${captureStart}`
+      ]);
+      return normalizeCapturedLines(stdout);
+    } catch (error) {
+      const details = `tmux capture-pane -p -t ${tmuxTarget} -S -${captureStart}`;
+      throw new Error(
+        `tmux capture-pane failed for session=${sessionId} sourcePaneId=${JSON.stringify(paneId)} cmd=${details}`,
+        { cause: error }
+      );
+    }
   }
 
   async ensureSessionExists(sessionId: string): Promise<boolean> {
