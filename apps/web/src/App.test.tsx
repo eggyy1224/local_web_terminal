@@ -168,6 +168,14 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("sessionId !== targetSessionId")).toBe(true);
   });
 
+  it("uses unicode11 width handling for terminal rendering", () => {
+    const terminalHookPath = path.resolve(process.cwd(), "src/hooks/useTerminal.ts");
+    const source = fs.readFileSync(terminalHookPath, "utf8");
+    expect(source.includes("Unicode11Addon")).toBe(true);
+    expect(source.includes("terminal.unicode.activeVersion")).toBe(true);
+    expect(source.includes("WebglAddon")).toBe(true);
+  });
+
   it("uses a stable bootstrap-timeout callback for ws hook", () => {
     const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
     const source = fs.readFileSync(appSourcePath, "utf8");
