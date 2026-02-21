@@ -1,0 +1,4 @@
+interface:
+  display_name: "tmux Pane Bridge"
+  short_description: "Capture pane output and send keys/text to another tmux pane"
+  default_prompt: "Use tmux to communicate with another pane: identify current pane, find target pane, capture scrollback, then send a message reliably (choose the right submit key combo for the target CLI). Prefer safe, non-destructive key sequences and confirm effects by re-capturing the target pane."
