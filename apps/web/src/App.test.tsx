@@ -13,7 +13,7 @@ import {
   writeTabSessionId
 } from "./App";
 
-vi.mock("xterm", () => ({
+vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     loadAddon() {}
     open() {}
@@ -25,7 +25,7 @@ vi.mock("xterm", () => ({
   }
 }));
 
-vi.mock("xterm-addon-fit", () => ({
+vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit() {}
     proposeDimensions() {
