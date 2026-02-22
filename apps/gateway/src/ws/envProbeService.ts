@@ -59,6 +59,7 @@ export interface EnvProbeService {
 
 export function createEnvProbeService(options: EnvProbeServiceOptions): EnvProbeService {
   const { sessionId, store, adapter, socket, probeTargetPromise, logger } = options;
+  const RETRY_DELAYS_MS = [280, 700];
 
   const runHiddenEnvironmentProbe = async () => {
     const version = store.nextEnvProbeVersion(sessionId);
@@ -66,55 +67,89 @@ export function createEnvProbeService(options: EnvProbeServiceOptions): EnvProbe
       return;
     }
 
-    try {
-      const probeTarget = (await probeTargetPromise) ?? sessionId;
-      const raw = await adapter.probeActiveEnvironment(sessionId, probeTarget);
-      let role: PaneRole = "tool";
+    const baseProbeTarget = (await probeTargetPromise) ?? sessionId;
+    const candidateTargets = Array.from(new Set([baseProbeTarget, sessionId].map((item) => item.trim()).filter(Boolean)));
+
+    const runAttempt = async (attempt: number): Promise<boolean> => {
       try {
-        const panes = await adapter.listPanes(sessionId, probeTarget);
-        role = await resolveRole(raw.activePaneId, panes, {
-          currentCommand: raw.paneCurrentCommand,
-          title: raw.paneTitle,
-          currentPath: raw.paneCurrentPath
-        });
-      } catch (error) {
-        logger?.warn({ code: "env_probe_list_panes_failed", sessionId, error });
-        const workspace = await probeWorkspace(raw.paneCurrentPath);
-        role = classifyPaneRole({
-          currentCommand: raw.paneCurrentCommand,
-          title: raw.paneTitle,
-          workspaceKind: workspace.kind
-        });
-      }
+        let raw: Awaited<ReturnType<TerminalAdapter["probeActiveEnvironment"]>> | null = null;
+        let usedTarget = sessionId;
+        let lastProbeError: unknown = null;
 
-      const env: EnvContext = {
-        activePaneId: raw.activePaneId,
-        role,
-        realCwd: raw.paneCurrentPath,
-        repoRoot: raw.repoRoot,
-        isGitRepo: raw.isGitRepo,
-        tmux: raw.tmux,
-        capturedAt: Date.now(),
-        version
-      };
-
-      store.setLatestEnvContext(sessionId, env);
-      if (socket.readyState !== OPEN) {
-        return;
-      }
-
-      socket.send(
-        JSON.stringify({
-          type: "meta",
-          data: {
-            kind: "env_probe",
-            env
+        for (const target of candidateTargets) {
+          try {
+            raw = await adapter.probeActiveEnvironment(sessionId, target);
+            const hasTmuxIdentity = Boolean(raw.tmux.session || raw.tmux.window || raw.tmux.pane);
+            if (!hasTmuxIdentity) {
+              continue;
+            }
+            usedTarget = target;
+            break;
+          } catch (error) {
+            lastProbeError = error;
           }
-        })
-      );
-    } catch (error) {
-      logger?.warn({ code: "env_probe_failed", sessionId, error });
-    }
+        }
+
+        if (!raw) {
+          throw lastProbeError instanceof Error ? lastProbeError : new Error("env probe returned no candidate data");
+        }
+
+        let role: PaneRole = "tool";
+        try {
+          const panes = await adapter.listPanes(sessionId, usedTarget);
+          role = await resolveRole(raw.activePaneId, panes, {
+            currentCommand: raw.paneCurrentCommand,
+            title: raw.paneTitle,
+            currentPath: raw.paneCurrentPath
+          });
+        } catch (error) {
+          logger?.warn({ code: "env_probe_list_panes_failed", sessionId, error });
+          const workspace = await probeWorkspace(raw.paneCurrentPath);
+          role = classifyPaneRole({
+            currentCommand: raw.paneCurrentCommand,
+            title: raw.paneTitle,
+            workspaceKind: workspace.kind
+          });
+        }
+
+        const env: EnvContext = {
+          activePaneId: raw.activePaneId,
+          role,
+          realCwd: raw.paneCurrentPath,
+          repoRoot: raw.repoRoot,
+          isGitRepo: raw.isGitRepo,
+          tmux: raw.tmux,
+          capturedAt: Date.now(),
+          version
+        };
+
+        store.setLatestEnvContext(sessionId, env);
+        if (socket.readyState !== OPEN) {
+          return true;
+        }
+
+        socket.send(
+          JSON.stringify({
+            type: "meta",
+            data: {
+              kind: "env_probe",
+              env
+            }
+          })
+        );
+        return true;
+      } catch (error) {
+        const delayMs = RETRY_DELAYS_MS[attempt];
+        if (delayMs !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          return runAttempt(attempt + 1);
+        }
+        logger?.warn({ code: "env_probe_failed", sessionId, error });
+        return false;
+      }
+    };
+
+    await runAttempt(0);
   };
 
   return { runHiddenEnvironmentProbe };

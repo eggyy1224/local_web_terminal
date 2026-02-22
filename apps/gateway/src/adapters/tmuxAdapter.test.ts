@@ -140,4 +140,42 @@ describe("TmuxAdapter capture target handling", () => {
     expect(panes[0]?.currentPath).toBe("/tmp\u001fnested");
     expect(panes[0]?.currentCommand).toBe("zsh");
   });
+
+  it("falls back to session target when probe target is invalid", async () => {
+    execFileMock.mockImplementation((_: string, args: string[], optionsOrCallback: unknown, callback: unknown) => {
+      const cb = resolveCallback(optionsOrCallback, callback);
+
+      if (args[0] === "display-message" && args[args.length - 1]?.includes("#{client_session}")) {
+        const target = args[3] ?? "";
+        if (target === "/dev/ttys999") {
+          cb(new Error("no such client") as NodeJS.ErrnoException, "", "no such client");
+          return;
+        }
+        if (target === "s_probe_fallback") {
+          cb(
+            null,
+            "s_other_client\\037s_probe_fallback\\0371\\037%31\\0370\\037/tmp\\037zsh\\037workspace\n",
+            ""
+          );
+          return;
+        }
+      }
+
+      if (args[0] === "git") {
+        cb(new Error("not a git repo") as NodeJS.ErrnoException, "", "fatal");
+        return;
+      }
+
+      cb(new Error(`unexpected command: ${args.join(" ")}`) as NodeJS.ErrnoException, "", "");
+    });
+
+    const adapter = new TmuxAdapter("tmux");
+    const probe = await adapter.probeActiveEnvironment("s_probe_fallback", "/dev/ttys999");
+    expect(probe.activePaneId).toBe("%31");
+    expect(probe.tmux.session).toBe("s_probe_fallback");
+    expect(probe.tmux.window).toBe("1");
+    expect(probe.tmux.pane).toBe("0");
+    expect(probe.paneCurrentPath).toBe("/tmp");
+    expect(probe.paneCurrentCommand).toBe("zsh");
+  });
 });

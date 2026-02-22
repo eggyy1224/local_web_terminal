@@ -4,7 +4,7 @@ import { assertRawTmuxTarget, normalizeUpstreamPaneTarget } from "../services/pa
 import type { ActiveEnvironmentProbe, PaneContext, PaneSnapshot, TerminalAdapter } from "../types.js";
 
 const execFileAsync = promisify(execFile);
-const PROBE_EXEC_TIMEOUT_MS = Number.parseInt(process.env.ENV_PROBE_TIMEOUT_MS ?? "180", 10) || 180;
+const PROBE_EXEC_TIMEOUT_MS = Number.parseInt(process.env.ENV_PROBE_TIMEOUT_MS ?? "800", 10) || 800;
 const TMUX_FIELD_SEPARATOR = "\u001f";
 const TMUX_ESCAPED_FIELD_SEPARATOR = "\\037";
 
@@ -127,17 +127,65 @@ export class TmuxAdapter implements TerminalAdapter {
       "#{pane_title}"
     ].join("\u001f");
 
-    const { stdout } = await execFileAsync(
-      this.tmuxBin,
-      ["display-message", "-p", "-t", target, format],
-      { timeout: PROBE_EXEC_TIMEOUT_MS, maxBuffer: 128 * 1024 }
-    );
+    const candidates = Array.from(new Set([target, clean].map((item) => item.trim()).filter(Boolean)));
+    let probe:
+      | {
+          tmuxSession: string;
+          tmuxWindow: string;
+          activePaneId: string;
+          tmuxPane: string;
+          paneCurrentPath: string;
+          paneCurrentCommand: string;
+          paneTitle: string;
+        }
+      | null = null;
+    let lastError: unknown = null;
 
-    const [clientSession, sessionName, tmuxWindow, activePaneId, tmuxPane, paneCurrentPath, paneCurrentCommand, paneTitle] =
-      splitTmuxFields(stdout.trim(), 8);
-    const tmuxSession = (clientSession ?? "").trim() || (sessionName ?? "").trim();
+    for (const candidate of candidates) {
+      try {
+        const { stdout } = await execFileAsync(
+          this.tmuxBin,
+          ["display-message", "-p", "-t", candidate, format],
+          { timeout: PROBE_EXEC_TIMEOUT_MS, maxBuffer: 128 * 1024 }
+        );
 
-    const realCwd = (paneCurrentPath ?? "").trim();
+        const [clientSession, sessionName, tmuxWindow, activePaneId, tmuxPane, paneCurrentPath, paneCurrentCommand, paneTitle] =
+          splitTmuxFields(stdout.trim(), 8);
+        const tmuxSession = (sessionName ?? "").trim() || (clientSession ?? "").trim();
+        const normalizedActivePaneId =
+          activePaneId && activePaneId.trim().length > 0
+            ? normalizeTmuxPaneTarget(normalizeUpstreamPaneTarget(activePaneId))
+            : "";
+        const normalizedTmuxWindow = (tmuxWindow ?? "").trim();
+        const normalizedTmuxPane = (tmuxPane ?? "").trim();
+        const hasIdentity = Boolean(tmuxSession || normalizedTmuxWindow || normalizedTmuxPane || normalizedActivePaneId);
+        if (!hasIdentity) {
+          continue;
+        }
+
+        probe = {
+          tmuxSession,
+          tmuxWindow: normalizedTmuxWindow,
+          activePaneId: normalizedActivePaneId,
+          tmuxPane: normalizedTmuxPane,
+          paneCurrentPath: (paneCurrentPath ?? "").trim(),
+          paneCurrentCommand: (paneCurrentCommand ?? "").trim(),
+          paneTitle: (paneTitle ?? "").trim()
+        };
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!probe) {
+      if (lastError) {
+        throw lastError;
+      }
+      throw new Error(`tmux env probe returned empty identity for session=${clean}`);
+    }
+
+    const realCwd = probe.paneCurrentPath;
     let repoRoot = "";
     let isGitRepo = false;
 
@@ -156,14 +204,14 @@ export class TmuxAdapter implements TerminalAdapter {
     }
 
     return {
-      activePaneId: activePaneId ? normalizeTmuxPaneTarget(normalizeUpstreamPaneTarget(activePaneId)) : "",
+      activePaneId: probe.activePaneId,
       paneCurrentPath: realCwd,
-      paneCurrentCommand: (paneCurrentCommand ?? "").trim(),
-      paneTitle: (paneTitle ?? "").trim(),
+      paneCurrentCommand: probe.paneCurrentCommand,
+      paneTitle: probe.paneTitle,
       tmux: {
-        session: tmuxSession,
-        window: (tmuxWindow ?? "").trim(),
-        pane: (tmuxPane ?? "").trim()
+        session: probe.tmuxSession,
+        window: probe.tmuxWindow,
+        pane: probe.tmuxPane
       },
       repoRoot,
       isGitRepo
@@ -232,15 +280,31 @@ export class TmuxAdapter implements TerminalAdapter {
   }
 
   private async getActiveWindow(cleanSessionId: string, probeTarget?: string): Promise<string> {
-    const target = probeTarget?.trim() || cleanSessionId;
-    const { stdout } = await execFileAsync(this.tmuxBin, [
-      "display-message",
-      "-p",
-      "-t",
-      target,
-      "#{window_id}"
-    ]);
-    return stdout.trim();
+    const candidates = Array.from(new Set([probeTarget?.trim() || "", cleanSessionId].filter(Boolean)));
+    let lastError: unknown = null;
+    for (const target of candidates) {
+      try {
+        const { stdout } = await execFileAsync(this.tmuxBin, [
+          "display-message",
+          "-p",
+          "-t",
+          target,
+          "#{window_id}"
+        ]);
+        const windowId = stdout.trim();
+        if (windowId.length > 0) {
+          return windowId;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    throw new Error(`tmux active window unavailable for session=${cleanSessionId}`);
   }
 }
 

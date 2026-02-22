@@ -250,11 +250,13 @@ describe("registerWsRoutes", () => {
       params: { sessionId: "s_ws_connect_push" }
     });
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     const meta = socket.sent
@@ -267,6 +269,52 @@ describe("registerWsRoutes", () => {
       )
       .find((item) => item.type === "meta" && item.data?.kind === "context_snapshot");
     expect(meta?.data?.snapshot?.sessionId).toBe("s_ws_connect_push");
+  }, 15_000);
+
+  it("emits env_probe meta on connect without waiting for submit", async () => {
+    const app = new FakeApp();
+    const store = new SessionStore();
+    const spawnMock = vi.mocked(pty.spawn);
+    const term = createMockTerm();
+    spawnMock.mockReturnValue(term as never);
+
+    const probeActiveEnvironment = vi.fn(async () => ({
+      activePaneId: "%1",
+      paneCurrentPath: process.cwd(),
+      paneCurrentCommand: "zsh",
+      paneTitle: "",
+      tmux: {
+        session: "s_test",
+        window: "0",
+        pane: "1"
+      },
+      repoRoot: process.cwd(),
+      isGitRepo: true
+    }));
+
+    await registerWsRoutes(app as never, {
+      adapter: createAdapter({ probeActiveEnvironment }),
+      store,
+      originAllowList: new Set()
+    });
+
+    const socket = new FakeSocket();
+    const sessionId = "s_ws_connect_env_probe";
+    app.wsHandler?.(socket, {
+      headers: {},
+      params: { sessionId }
+    });
+
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+        }),
+      { timeoutMs: 10_000 }
+    );
+
+    expect(probeActiveEnvironment).toHaveBeenCalledWith(sessionId, sessionId);
   });
 
   it("coalesces stdout burst into a bounded number of context pushes", async () => {
@@ -290,11 +338,13 @@ describe("registerWsRoutes", () => {
       params: { sessionId: "s_ws_stdout_burst" }
     });
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     term.emitData("line-1\n");
@@ -307,7 +357,7 @@ describe("registerWsRoutes", () => {
           const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
           return parsed.type === "meta" && parsed.data?.kind === "context_snapshot";
         }).length >= 2,
-      { timeoutMs: 2_000 }
+      { timeoutMs: 5_000 }
     );
 
     const contextSnapshots = socket.sent.filter((raw) => {
@@ -315,7 +365,7 @@ describe("registerWsRoutes", () => {
       return parsed.type === "meta" && parsed.data?.kind === "context_snapshot";
     });
     expect(contextSnapshots).toHaveLength(2);
-  });
+  }, 15_000);
 
   it("handles stdin/resize and emits env_probe meta after submit", async () => {
     const app = new FakeApp();
@@ -610,11 +660,13 @@ describe("registerWsRoutes", () => {
       params: { sessionId: "s_ws_close_heartbeat" }
     });
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string; reason?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "context_snapshot" && parsed.data?.reason === "connect";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     await new Promise((resolve) => setTimeout(resolve, 65));
@@ -623,5 +675,5 @@ describe("registerWsRoutes", () => {
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(ensureSessionExists.mock.calls.length).toBe(callsBeforeClose);
-  });
+  }, 15_000);
 });

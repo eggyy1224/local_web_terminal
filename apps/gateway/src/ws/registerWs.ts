@@ -80,6 +80,7 @@ export async function registerWsRoutes(
       logger: deps.logger
     });
     contextPush.queue("connect", true);
+    void envProbeService.runHiddenEnvironmentProbe();
 
     term.onData((data) => {
       deps.store.appendStdout(sessionId, data);
