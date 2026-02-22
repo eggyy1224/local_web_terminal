@@ -11,6 +11,23 @@ import { createEnvProbeService } from "./envProbeService.js";
 import { decodeWsClientMessage } from "./wsMessageCodec.js";
 
 const execFileAsync = promisify(execFile);
+const wsParamsSchema = z.object({ sessionId: z.string().min(1) });
+
+interface WsRouteDeps extends ContextSnapshotDeps {
+  originAllowList: Set<string>;
+}
+
+interface WsPushTiming {
+  debounceMs: number;
+  heartbeatMs: number;
+}
+
+function getContextPushTiming(): WsPushTiming {
+  return {
+    debounceMs: Number.parseInt(process.env.CONTEXT_PUSH_DEBOUNCE_MS ?? "300", 10) || 300,
+    heartbeatMs: Number.parseInt(process.env.CONTEXT_PUSH_HEARTBEAT_MS ?? "15000", 10) || 15_000
+  };
+}
 
 function hasSubmitBoundary(data: string): boolean {
   return data.includes("\r") || data.includes("\n");
@@ -38,7 +55,7 @@ async function resolveClientTargetByPid(pid: number): Promise<string | null> {
 
 export async function registerWsRoutes(
   app: FastifyInstance,
-  deps: ContextSnapshotDeps & { originAllowList: Set<string> }
+  deps: WsRouteDeps
 ): Promise<void> {
   app.get("/ws/sessions/:sessionId/stream", { websocket: true }, (socket, request) => {
     const origin = request.headers.origin;
@@ -48,10 +65,9 @@ export async function registerWsRoutes(
       return;
     }
 
-    const params = z.object({ sessionId: z.string().min(1) }).parse(request.params);
+    const params = wsParamsSchema.parse(request.params);
     const sessionId = params.sessionId;
-    const contextPushDebounceMs = Number.parseInt(process.env.CONTEXT_PUSH_DEBOUNCE_MS ?? "300", 10) || 300;
-    const contextPushHeartbeatMs = Number.parseInt(process.env.CONTEXT_PUSH_HEARTBEAT_MS ?? "15000", 10) || 15_000;
+    const { debounceMs, heartbeatMs } = getContextPushTiming();
     deps.store.ensure(sessionId);
 
     const cmd = attachCommand(sessionId);
@@ -66,8 +82,8 @@ export async function registerWsRoutes(
     const contextPush = createContextPushCoordinator({
       sessionId,
       socket,
-      debounceMs: contextPushDebounceMs,
-      heartbeatMs: contextPushHeartbeatMs,
+      debounceMs,
+      heartbeatMs,
       buildSnapshot: () => buildSessionContextSnapshot(sessionId, deps),
       logger: deps.logger
     });
