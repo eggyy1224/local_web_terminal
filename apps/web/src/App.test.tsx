@@ -159,13 +159,17 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("sessionIdRef.current = null")).toBe(true);
   });
 
-  it("guards context writes with current session checks", () => {
+  it("keeps context/session guards in app and context sync hook", () => {
     const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
-    const source = fs.readFileSync(appSourcePath, "utf8");
-    expect(source.includes("const isSessionCurrent = useCallback")).toBe(true);
-    expect(source.includes("if (!isSessionCurrent(targetSessionId))")).toBe(true);
-    expect(source.includes("context_refresh_session_mismatch")).toBe(true);
-    expect(source.includes("context_snapshot_session_mismatch")).toBe(true);
+    const appSource = fs.readFileSync(appSourcePath, "utf8");
+    expect(appSource.includes("const isSessionCurrent = useCallback")).toBe(true);
+    expect(appSource.includes("useSessionContextSync")).toBe(true);
+
+    const syncHookPath = path.resolve(process.cwd(), "src/hooks/useSessionContextSync.ts");
+    const syncSource = fs.readFileSync(syncHookPath, "utf8");
+    expect(syncSource.includes("if (!isSessionCurrent(targetSessionId))")).toBe(true);
+    expect(syncSource.includes("context_refresh_session_mismatch")).toBe(true);
+    expect(syncSource.includes("context_snapshot_session_mismatch")).toBe(true);
   });
 
   it("guards websocket parsing and reconnect with disposed/session checks", () => {

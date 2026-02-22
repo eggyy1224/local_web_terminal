@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EnvContext, SessionContext, WsClientMessage } from "@local-terminal/shared";
+import type { WsClientMessage } from "@local-terminal/shared";
 import { useSessionBootstrap } from "./hooks/useSessionBootstrap.js";
+import { useSessionContextSync } from "./hooks/useSessionContextSync.js";
 import { useTerminal } from "./hooks/useTerminal.js";
 import { useWsStream } from "./hooks/useWsStream.js";
 import { createApiClient, DEFAULT_GATEWAY_BASE } from "./services/apiClient.js";
@@ -19,17 +20,8 @@ const CONTEXT_BOOTSTRAP_TIMEOUT_MS =
   ) || 1500;
 const api = createApiClient(GATEWAY_BASE);
 
-function logWarn(code: string, error?: unknown): void {
-  if (!import.meta.env.DEV) {
-    return;
-  }
-  console.warn(code, error);
-}
-
 export function App() {
   const terminalNodeRef = useRef<HTMLDivElement | null>(null);
-  const latestContextRef = useRef<SessionContext>(createEmptyContext());
-  const latestEnvContextRef = useRef<EnvContext | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const sendMessageRef = useRef<(message: WsClientMessage) => void>(() => {});
@@ -56,42 +48,13 @@ export function App() {
     return Boolean(targetSessionId) && !disposedRef.current && sessionIdRef.current === targetSessionId;
   }, []);
 
-  const refreshContext = useCallback(async (sessionIdHint?: string) => {
-    const targetSessionId = sessionIdHint ?? sessionIdRef.current;
-    if (!isSessionCurrent(targetSessionId)) {
-      return false;
-    }
-
-    try {
-      const context = await api<SessionContext>(`/api/context/${targetSessionId}`);
-      if (!isSessionCurrent(targetSessionId)) {
-        return false;
-      }
-      if (context.sessionId && context.sessionId !== targetSessionId) {
-        logWarn("context_refresh_session_mismatch", {
-          expectedSessionId: targetSessionId,
-          actualSessionId: context.sessionId
-        });
-        return false;
-      }
-      const mergedContext = mergeIncomingContext(context);
-      const syncedEnvContext = syncEnvContextFromSnapshot(
-        { ...mergedContext, updatedAt: Date.now() },
-        latestEnvContextRef.current
-      );
-      latestEnvContextRef.current = syncedEnvContext;
-      latestContextRef.current = mergedContext;
-      writeSnapshotScripts({
-        context: mergedContext,
-        updatedAt: Date.now(),
-        envContext: syncedEnvContext
-      });
-      return true;
-    } catch (error) {
-      logWarn("context_refresh_failed", error);
-      return false;
-    }
-  }, [isSessionCurrent]);
+  const {
+    refreshContext,
+    onContextSnapshot,
+    onEnvProbe,
+    resetContextSidecar,
+    seedSessionContext
+  } = useSessionContextSync({ isSessionCurrent, sessionIdRef });
 
   const onStdout = useCallback(
     (data: string) => {
@@ -99,46 +62,6 @@ export function App() {
     },
     [terminalRef]
   );
-
-  const onContextSnapshot = useCallback((snapshot: SessionContext, updatedAt: number, targetSessionId: string) => {
-    if (!isSessionCurrent(targetSessionId)) {
-      return;
-    }
-    if (snapshot.sessionId && snapshot.sessionId !== targetSessionId) {
-      logWarn("context_snapshot_session_mismatch", {
-        expectedSessionId: targetSessionId,
-        actualSessionId: snapshot.sessionId
-      });
-      return;
-    }
-    const mergedContext = mergeIncomingContext(snapshot);
-    const syncedEnvContext = syncEnvContextFromSnapshot(
-      { ...mergedContext, updatedAt },
-      latestEnvContextRef.current
-    );
-    latestEnvContextRef.current = syncedEnvContext;
-    latestContextRef.current = mergedContext;
-    writeSnapshotScripts({
-      context: mergedContext,
-      updatedAt,
-      envContext: syncedEnvContext
-    });
-  }, [isSessionCurrent]);
-
-  const onEnvProbe = useCallback((incoming: EnvContext, targetSessionId: string) => {
-    if (!isSessionCurrent(targetSessionId)) {
-      return;
-    }
-    const current = latestEnvContextRef.current;
-    if (!current || incoming.version >= current.version) {
-      latestEnvContextRef.current = incoming;
-      writeSnapshotScripts({
-        context: latestContextRef.current,
-        updatedAt: Date.now(),
-        envContext: incoming
-      });
-    }
-  }, [isSessionCurrent]);
 
   const handleBootstrapTimeout = useCallback(
     async (nextSessionId: string) => {
@@ -179,13 +102,7 @@ export function App() {
 
   useEffect(() => {
     disposedRef.current = false;
-    latestContextRef.current = createEmptyContext();
-    latestEnvContextRef.current = null;
-    writeSnapshotScripts({
-      context: createEmptyContext(),
-      updatedAt: Date.now(),
-      envContext: null
-    });
+    resetContextSidecar();
 
     let active = true;
     const boot = async () => {
@@ -195,19 +112,13 @@ export function App() {
           return;
         }
         sessionIdRef.current = nextSessionId;
-        latestContextRef.current = {
-          ...createEmptyContext(),
-          sessionId: nextSessionId
-        };
-        writeSnapshotScripts({
-          context: latestContextRef.current,
-          updatedAt: Date.now(),
-          envContext: latestEnvContextRef.current
-        });
+        seedSessionContext(nextSessionId);
         fit();
         setSessionId(nextSessionId);
       } catch (error) {
-        logWarn("session_bootstrap_failed", error);
+        if (import.meta.env.DEV) {
+          console.warn("session_bootstrap_failed", error);
+        }
       }
     };
 
@@ -218,7 +129,7 @@ export function App() {
       sessionIdRef.current = null;
       setSessionId(null);
     };
-  }, [bootSession, fit]);
+  }, [bootSession, fit, resetContextSidecar, seedSessionContext]);
 
   return (
     <div className="terminal-only">
