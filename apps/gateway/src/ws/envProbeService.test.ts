@@ -211,4 +211,31 @@ describe("createEnvProbeService", () => {
       })
     );
   });
+
+  it("stops retrying when socket closes after a failed attempt", async () => {
+    const sessionId = "s_env_probe_socket_closed";
+    const store = new SessionStore();
+    store.ensure(sessionId);
+    const socket = new FakeSocket();
+    const warn = vi.fn();
+    const probeActiveEnvironment = vi.fn(async () => {
+      socket.readyState = 3;
+      throw new Error("probe_failed_then_closed");
+    });
+
+    const service = createEnvProbeService({
+      sessionId,
+      store,
+      adapter: createAdapter({ probeActiveEnvironment }),
+      socket,
+      probeTargetPromise: Promise.resolve(null),
+      logger: { warn }
+    });
+
+    await expect(service.runHiddenEnvironmentProbe()).resolves.toBeUndefined();
+
+    expect(probeActiveEnvironment).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(socket.sent).toHaveLength(0);
+  });
 });

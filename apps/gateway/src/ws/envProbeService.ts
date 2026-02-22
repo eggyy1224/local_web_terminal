@@ -147,6 +147,9 @@ export function createEnvProbeService(options: EnvProbeServiceOptions): EnvProbe
         );
         return true;
       } catch (error) {
+        if (socket.readyState !== OPEN) {
+          return false;
+        }
         const delayMs = RETRY_DELAYS_MS[attempt];
         if (delayMs !== undefined) {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
