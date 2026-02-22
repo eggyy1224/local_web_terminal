@@ -37,6 +37,34 @@ export function useSessionContextSync(options: UseSessionContextSyncOptions): Us
   const latestContextRef = useRef<SessionContext>(createEmptyContext());
   const latestEnvContextRef = useRef<EnvContext | null>(null);
 
+  const commitSnapshotState = useCallback((params: {
+    context: SessionContext;
+    envContext: EnvContext | null;
+    updatedAt: number;
+  }) => {
+    latestContextRef.current = params.context;
+    latestEnvContextRef.current = params.envContext;
+    writeSnapshotScripts({
+      context: params.context,
+      updatedAt: params.updatedAt,
+      envContext: params.envContext
+    });
+  }, []);
+
+  const applySnapshot = useCallback((snapshot: SessionContext, updatedAt: number) => {
+    const mergedContext = mergeIncomingContext(snapshot);
+    const syncedEnvContext = syncEnvContextFromSnapshot(
+      { ...mergedContext, updatedAt },
+      latestEnvContextRef.current
+    );
+
+    commitSnapshotState({
+      context: mergedContext,
+      envContext: syncedEnvContext,
+      updatedAt
+    });
+  }, [commitSnapshotState]);
+
   const refreshContext = useCallback(async (sessionIdHint?: string) => {
     const targetSessionId = sessionIdHint ?? sessionIdRef.current;
     if (!isSessionCurrent(targetSessionId)) {
@@ -56,19 +84,7 @@ export function useSessionContextSync(options: UseSessionContextSyncOptions): Us
         return false;
       }
 
-      const mergedContext = mergeIncomingContext(context);
-      const syncedEnvContext = syncEnvContextFromSnapshot(
-        { ...mergedContext, updatedAt: Date.now() },
-        latestEnvContextRef.current
-      );
-
-      latestEnvContextRef.current = syncedEnvContext;
-      latestContextRef.current = mergedContext;
-      writeSnapshotScripts({
-        context: mergedContext,
-        updatedAt: Date.now(),
-        envContext: syncedEnvContext
-      });
+      applySnapshot(context, Date.now());
       return true;
     } catch (error) {
       logWarn("context_refresh_failed", error);
@@ -88,20 +104,8 @@ export function useSessionContextSync(options: UseSessionContextSyncOptions): Us
       return;
     }
 
-    const mergedContext = mergeIncomingContext(snapshot);
-    const syncedEnvContext = syncEnvContextFromSnapshot(
-      { ...mergedContext, updatedAt },
-      latestEnvContextRef.current
-    );
-
-    latestEnvContextRef.current = syncedEnvContext;
-    latestContextRef.current = mergedContext;
-    writeSnapshotScripts({
-      context: mergedContext,
-      updatedAt,
-      envContext: syncedEnvContext
-    });
-  }, [isSessionCurrent]);
+    applySnapshot(snapshot, updatedAt);
+  }, [applySnapshot, isSessionCurrent]);
 
   const onEnvProbe = useCallback((incoming: EnvContext, targetSessionId: string) => {
     if (!isSessionCurrent(targetSessionId)) {
@@ -110,37 +114,34 @@ export function useSessionContextSync(options: UseSessionContextSyncOptions): Us
 
     const current = latestEnvContextRef.current;
     if (!current || incoming.version >= current.version) {
-      latestEnvContextRef.current = incoming;
-      writeSnapshotScripts({
+      commitSnapshotState({
         context: latestContextRef.current,
         updatedAt: Date.now(),
         envContext: incoming
       });
     }
-  }, [isSessionCurrent]);
+  }, [commitSnapshotState, isSessionCurrent]);
 
   const resetContextSidecar = useCallback(() => {
-    latestContextRef.current = createEmptyContext();
-    latestEnvContextRef.current = null;
-    writeSnapshotScripts({
+    commitSnapshotState({
       context: createEmptyContext(),
       updatedAt: Date.now(),
       envContext: null
     });
-  }, []);
+  }, [commitSnapshotState]);
 
   const seedSessionContext = useCallback((nextSessionId: string) => {
-    latestContextRef.current = {
+    const seededContext = {
       ...createEmptyContext(),
       sessionId: nextSessionId
     };
 
-    writeSnapshotScripts({
-      context: latestContextRef.current,
+    commitSnapshotState({
+      context: seededContext,
       updatedAt: Date.now(),
       envContext: latestEnvContextRef.current
     });
-  }, []);
+  }, [commitSnapshotState]);
 
   return {
     latestContextRef,
