@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import type { EnvContext, SessionContext } from "@local-terminal/shared";
 import {
   createEmptyContext,
@@ -6,9 +6,7 @@ import {
   syncEnvContextFromSnapshot,
   writeSnapshotScripts
 } from "../services/snapshotWriter.js";
-import { createApiClient, DEFAULT_GATEWAY_BASE } from "../services/apiClient.js";
-
-const api = createApiClient(DEFAULT_GATEWAY_BASE);
+import { createApiClient } from "../services/apiClient.js";
 
 function logWarn(code: string, error?: unknown): void {
   if (!import.meta.env.DEV) {
@@ -18,6 +16,7 @@ function logWarn(code: string, error?: unknown): void {
 }
 
 interface UseSessionContextSyncOptions {
+  gatewayBase: string;
   isSessionCurrent: (sessionId: string | null | undefined) => sessionId is string;
   sessionIdRef: MutableRefObject<string | null>;
 }
@@ -33,7 +32,8 @@ interface UseSessionContextSyncResult {
 }
 
 export function useSessionContextSync(options: UseSessionContextSyncOptions): UseSessionContextSyncResult {
-  const { isSessionCurrent, sessionIdRef } = options;
+  const { gatewayBase, isSessionCurrent, sessionIdRef } = options;
+  const api = useMemo(() => createApiClient(gatewayBase), [gatewayBase]);
   const latestContextRef = useRef<SessionContext>(createEmptyContext());
   const latestEnvContextRef = useRef<EnvContext | null>(null);
 
@@ -74,7 +74,7 @@ export function useSessionContextSync(options: UseSessionContextSyncOptions): Us
       logWarn("context_refresh_failed", error);
       return false;
     }
-  }, [isSessionCurrent, sessionIdRef]);
+  }, [api, isSessionCurrent, sessionIdRef]);
 
   const onContextSnapshot = useCallback((snapshot: SessionContext, updatedAt: number, targetSessionId: string) => {
     if (!isSessionCurrent(targetSessionId)) {

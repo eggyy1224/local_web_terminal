@@ -7,6 +7,8 @@ const MAX_OUTPUT_CHUNKS = 400;
 const MAX_COMMANDS = 80;
 const DEFAULT_SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS ?? "1800000", 10) || 1_800_000;
 
+const CSI_TERMINATOR_PATTERN = /[@-~]/;
+
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
   private mostRecentSessionId: string | null = null;
@@ -99,7 +101,13 @@ export class SessionStore {
       return;
     }
 
-    for (const ch of incoming) {
+    for (let i = 0; i < incoming.length; i += 1) {
+      if (incoming[i] === "\u001b") {
+        i = this.skipAnsiSequence(incoming, i);
+        continue;
+      }
+
+      const ch = incoming[i] ?? "";
       if (ch === "\u007f") {
         state.currentInput = state.currentInput.slice(0, -1);
         continue;
@@ -121,6 +129,20 @@ export class SessionStore {
         state.currentInput += ch;
       }
     }
+  }
+
+  private skipAnsiSequence(input: string, index: number): number {
+    const nextChar = input[index + 1];
+    if (nextChar === "[") {
+      for (let i = index + 2; i < input.length; i += 1) {
+        if (CSI_TERMINATOR_PATTERN.test(input[i] ?? "")) {
+          return i;
+        }
+      }
+      return input.length;
+    }
+
+    return index + 1;
   }
 
   setContext(sessionId: string, context: { cwd: string; shell: string }): void {

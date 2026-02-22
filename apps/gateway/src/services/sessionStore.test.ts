@@ -26,6 +26,17 @@ describe("SessionStore", () => {
     expect(context?.lastCommands[1]).not.toContain("abc123");
   });
 
+  it("ignores ansi escape sequences while capturing input", () => {
+    const store = new SessionStore();
+    const sessionId = "s_store_ansi";
+    store.ensure(sessionId);
+
+    store.appendInput(sessionId, "npm run dev\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\u001b[D\r");
+
+    const context = store.getContext(sessionId);
+    expect(context?.lastCommands).toEqual(["npm run dev"]);
+  });
+
   it("enforces command and output windows", () => {
     const store = new SessionStore();
     const sessionId = "s_store_limits";

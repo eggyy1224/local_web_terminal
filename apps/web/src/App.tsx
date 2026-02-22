@@ -54,7 +54,7 @@ export function App() {
     onEnvProbe,
     resetContextSidecar,
     seedSessionContext
-  } = useSessionContextSync({ isSessionCurrent, sessionIdRef });
+  } = useSessionContextSync({ gatewayBase: GATEWAY_BASE, isSessionCurrent, sessionIdRef });
 
   const onStdout = useCallback(
     (data: string) => {
