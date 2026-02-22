@@ -22,6 +22,12 @@ interface WsPushTiming {
   heartbeatMs: number;
 }
 
+interface WsSocketLike {
+  send(payload: string): void;
+  close(): void;
+  on(event: "message" | "close", listener: (payload?: string | Buffer) => void): void;
+}
+
 function getContextPushTiming(): WsPushTiming {
   return {
     debounceMs: Number.parseInt(process.env.CONTEXT_PUSH_DEBOUNCE_MS ?? "300", 10) || 300,
@@ -31,6 +37,17 @@ function getContextPushTiming(): WsPushTiming {
 
 function hasSubmitBoundary(data: string): boolean {
   return data.includes("\r") || data.includes("\n");
+}
+
+function isAllowedOrigin(origin: string | undefined, allowList: Set<string>): boolean {
+  if (!origin) {
+    return true;
+  }
+  return allowList.has(origin) || isLoopbackOrigin(origin);
+}
+
+function sendWsEvent(socket: WsSocketLike, type: string, data: unknown): void {
+  socket.send(JSON.stringify({ type, data }));
 }
 
 async function resolveClientTargetByPid(pid: number): Promise<string | null> {
@@ -58,9 +75,8 @@ export async function registerWsRoutes(
   deps: WsRouteDeps
 ): Promise<void> {
   app.get("/ws/sessions/:sessionId/stream", { websocket: true }, (socket, request) => {
-    const origin = request.headers.origin;
-    if (origin && !deps.originAllowList.has(origin) && !isLoopbackOrigin(origin)) {
-      socket.send(JSON.stringify({ type: "error", data: "origin_not_allowed" }));
+    if (!isAllowedOrigin(request.headers.origin, deps.originAllowList)) {
+      sendWsEvent(socket, "error", "origin_not_allowed");
       socket.close();
       return;
     }
@@ -78,7 +94,7 @@ export async function registerWsRoutes(
       cwd: process.cwd(),
       env: process.env
     });
-    const probeTargetPromise = resolveClientTargetByPid(term.pid ?? 0);
+
     const contextPush = createContextPushCoordinator({
       sessionId,
       socket,
@@ -92,27 +108,28 @@ export async function registerWsRoutes(
       store: deps.store,
       adapter: deps.adapter,
       socket,
-      probeTargetPromise,
+      probeTargetPromise: resolveClientTargetByPid(term.pid ?? 0),
       logger: deps.logger
     });
+
     contextPush.queue("connect", true);
     void envProbeService.runHiddenEnvironmentProbe();
 
     term.onData((data) => {
       deps.store.appendStdout(sessionId, data);
-      socket.send(JSON.stringify({ type: "stdout", data }));
+      sendWsEvent(socket, "stdout", data);
       contextPush.queue("stdout");
     });
 
     term.onExit(({ exitCode, signal }) => {
-      socket.send(JSON.stringify({ type: "exit", data: { exitCode, signal } }));
+      sendWsEvent(socket, "exit", { exitCode, signal });
       socket.close();
     });
 
-    socket.on("message", (raw: string | Buffer) => {
-      const parsed = decodeWsClientMessage(raw);
+    socket.on("message", (raw) => {
+      const parsed = decodeWsClientMessage(raw ?? "");
       if (!parsed) {
-        socket.send(JSON.stringify({ type: "error", data: "invalid_message" }));
+        sendWsEvent(socket, "error", "invalid_message");
         return;
       }
 
