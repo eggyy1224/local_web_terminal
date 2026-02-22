@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import {
-  parseWsServerMessage,
   type EnvContext,
   type SessionContext,
   type WsClientMessage
 } from "@local-terminal/shared";
 import type { TerminalSize } from "./useTerminal.js";
+import { parseServerEventPayload, toWsBaseUrl } from "./wsStreamUtils.js";
 
 interface UseWsStreamOptions {
   gatewayBase: string;
@@ -80,7 +80,7 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
         return;
       }
 
-      const base = gatewayBase.replace("http://", "ws://").replace("https://", "wss://");
+      const base = toWsBaseUrl(gatewayBase);
       const ws = new WebSocket(`${base}/ws/sessions/${targetSessionId}/stream`);
       wsRef.current = ws;
       let hasReceivedContextSnapshot = false;
@@ -104,27 +104,19 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
       };
 
       ws.onmessage = (event) => {
-        if (typeof event.data !== "string") {
-          if (import.meta.env.DEV) {
-            console.warn("ignored_non_string_ws_payload");
-          }
-          return;
-        }
-
-        let rawParsed: unknown;
-        try {
-          rawParsed = JSON.parse(event.data);
-        } catch {
-          if (import.meta.env.DEV) {
-            console.warn("ignored_invalid_ws_json");
-          }
-          return;
-        }
-
-        const parsed = parseWsServerMessage(rawParsed);
+        const parsed = parseServerEventPayload(event.data);
         if (!parsed) {
           if (import.meta.env.DEV) {
-            console.warn("ignored_invalid_ws_message");
+            if (typeof event.data !== "string") {
+              console.warn("ignored_non_string_ws_payload");
+            } else {
+              try {
+                JSON.parse(event.data);
+                console.warn("ignored_invalid_ws_message");
+              } catch {
+                console.warn("ignored_invalid_ws_json");
+              }
+            }
           }
           return;
         }

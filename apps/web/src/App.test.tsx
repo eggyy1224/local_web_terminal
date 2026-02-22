@@ -175,8 +175,9 @@ describe("App snapshot sidecar", () => {
   it("guards websocket parsing and reconnect with disposed/session checks", () => {
     const wsHookPath = path.resolve(process.cwd(), "src/hooks/useWsStream.ts");
     const source = fs.readFileSync(wsHookPath, "utf8");
-    expect(source.includes("parseWsServerMessage")).toBe(true);
+    expect(source.includes("parseServerEventPayload")).toBe(true);
     expect(source.includes("ignored_invalid_ws_json")).toBe(true);
+    expect(source.includes("toWsBaseUrl")).toBe(true);
     expect(source.includes("disposedRef.current")).toBe(true);
     expect(source.includes("sessionId !== targetSessionId")).toBe(true);
     expect(source.includes("onContextSnapshot(parsed.data.snapshot, parsed.data.updatedAt, targetSessionId)")).toBe(true);
