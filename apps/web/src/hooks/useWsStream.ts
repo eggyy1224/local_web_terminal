@@ -36,8 +36,13 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
     disposedRef
   } = options;
   const wsRef = useRef<WebSocket | null>(null);
+  const sessionIdRef = useRef<string | null>(sessionId);
   const bootstrapTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const clearBootstrapTimer = useCallback(() => {
     if (bootstrapTimerRef.current !== null) {
@@ -75,8 +80,12 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
     }
 
     let cancelled = false;
+    const isSessionInactive = (targetSessionId: string) => {
+      return cancelled || disposedRef.current || sessionIdRef.current !== targetSessionId;
+    };
+
     const connectWs = (targetSessionId: string) => {
-      if (cancelled || disposedRef.current) {
+      if (isSessionInactive(targetSessionId)) {
         return;
       }
 
@@ -96,7 +105,7 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
 
         clearBootstrapTimer();
         bootstrapTimerRef.current = window.setTimeout(() => {
-          if (cancelled || disposedRef.current || sessionId !== targetSessionId || hasReceivedContextSnapshot) {
+          if (isSessionInactive(targetSessionId) || hasReceivedContextSnapshot) {
             return;
           }
           void onBootstrapTimeout(targetSessionId);
@@ -140,13 +149,13 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
 
       ws.onclose = () => {
         clearBootstrapTimer();
-        if (cancelled || disposedRef.current || sessionId !== targetSessionId) {
+        if (isSessionInactive(targetSessionId)) {
           return;
         }
 
         clearReconnectTimer();
         reconnectTimerRef.current = window.setTimeout(() => {
-          if (cancelled || disposedRef.current || sessionId !== targetSessionId) {
+          if (isSessionInactive(targetSessionId)) {
             return;
           }
           connectWs(targetSessionId);

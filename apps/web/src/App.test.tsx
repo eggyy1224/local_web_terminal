@@ -181,7 +181,8 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("ignored_invalid_ws_json")).toBe(true);
     expect(source.includes("toWsBaseUrl")).toBe(true);
     expect(source.includes("disposedRef.current")).toBe(true);
-    expect(source.includes("sessionId !== targetSessionId")).toBe(true);
+    expect(source.includes("const isSessionInactive = (targetSessionId: string)")).toBe(true);
+    expect(source.includes("sessionIdRef.current !== targetSessionId")).toBe(true);
     expect(source.includes("onContextSnapshot(parsed.data.snapshot, parsed.data.updatedAt, targetSessionId)")).toBe(true);
     expect(source.includes("onEnvProbe(parsed.data.env, targetSessionId)")).toBe(true);
   });
