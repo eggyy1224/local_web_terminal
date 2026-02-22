@@ -16,6 +16,27 @@ export class SessionStore {
     this.sessionTtlMs = sessionTtlMs;
   }
 
+  private clonePane(pane: PaneView): PaneView {
+    return { ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] };
+  }
+
+  private getState(sessionId: string, options?: { touch?: boolean; markAsRecent?: boolean }): SessionState | null {
+    const state = this.sessions.get(sessionId);
+    if (!state) {
+      return null;
+    }
+
+    if (options?.markAsRecent) {
+      this.mostRecentSessionId = sessionId;
+    }
+
+    if (options?.touch) {
+      this.touchSession(sessionId);
+    }
+
+    return state;
+  }
+
   private touchSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) {
@@ -38,9 +59,8 @@ export class SessionStore {
 
   ensure(sessionId: string): SessionState {
     this.mostRecentSessionId = sessionId;
-    const existing = this.sessions.get(sessionId);
+    const existing = this.getState(sessionId, { touch: true });
     if (existing) {
-      this.touchSession(sessionId);
       return existing;
     }
 
@@ -62,13 +82,11 @@ export class SessionStore {
   }
 
   appendStdout(sessionId: string, chunk: string): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return;
     }
 
-    this.touchSession(sessionId);
     state.outputChunks.push(chunk);
     if (state.outputChunks.length > MAX_OUTPUT_CHUNKS) {
       state.outputChunks.splice(0, state.outputChunks.length - MAX_OUTPUT_CHUNKS);
@@ -76,13 +94,11 @@ export class SessionStore {
   }
 
   appendInput(sessionId: string, incoming: string): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return;
     }
 
-    this.touchSession(sessionId);
     for (const ch of incoming) {
       if (ch === "\u007f") {
         state.currentInput = state.currentInput.slice(0, -1);
@@ -108,24 +124,21 @@ export class SessionStore {
   }
 
   setContext(sessionId: string, context: { cwd: string; shell: string }): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return;
     }
 
-    this.touchSession(sessionId);
     state.cwd = context.cwd;
     state.shell = context.shell;
   }
 
   getContext(sessionId: string): SessionContext | null {
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true });
     if (!state) {
       return null;
     }
 
-    this.touchSession(sessionId);
     const recentOutput = state.outputChunks.slice(-50).map((chunk) => maskSensitive(chunk));
     const recentErrors = extractRecentErrors(recentOutput);
 
@@ -142,7 +155,7 @@ export class SessionStore {
       shell: state.shell,
       recentOutput,
       lastCommands: state.lastCommands.slice(-20),
-      panes: state.latestPanes.map((pane) => ({ ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] }))
+      panes: state.latestPanes.map((pane) => this.clonePane(pane))
     };
   }
 
@@ -151,25 +164,21 @@ export class SessionStore {
   }
 
   nextEnvProbeVersion(sessionId: string): number {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return 0;
     }
 
-    this.touchSession(sessionId);
     state.envProbeVersion += 1;
     return state.envProbeVersion;
   }
 
   setLatestEnvContext(sessionId: string, env: EnvContext): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return;
     }
 
-    this.touchSession(sessionId);
     if (env.version < state.envProbeVersion) {
       return;
     }
@@ -179,54 +188,48 @@ export class SessionStore {
   }
 
   getLatestEnvContext(sessionId: string): EnvContext | null {
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true });
     if (!state?.latestEnvContext) {
       return null;
     }
 
-    this.touchSession(sessionId);
     return state.latestEnvContext;
   }
 
   updatePaneInteraction(sessionId: string, paneId: string, interactedAt = Date.now()): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state || !paneId) {
       return;
     }
 
-    this.touchSession(sessionId);
     state.paneInteractionById[paneId] = interactedAt;
   }
 
   getPaneInteraction(sessionId: string, paneId: string): number | null {
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true });
     if (!state || !paneId) {
       return null;
     }
 
-    this.touchSession(sessionId);
     return state.paneInteractionById[paneId] ?? null;
   }
 
   setLatestPanes(sessionId: string, panes: PaneView[]): void {
-    this.mostRecentSessionId = sessionId;
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true, markAsRecent: true });
     if (!state) {
       return;
     }
 
-    this.touchSession(sessionId);
-    state.latestPanes = panes.map((pane) => ({ ...pane, lines: [...pane.lines], errors: [...(pane.errors ?? [])] }));
+    state.latestPanes = panes.map((pane) => this.clonePane(pane));
   }
 
   getLatestPanes(sessionId: string): PaneView[] {
-    const state = this.sessions.get(sessionId);
+    const state = this.getState(sessionId, { touch: true });
     if (!state) {
       return [];
     }
-    this.touchSession(sessionId);
-    return state.latestPanes;
+
+    return state.latestPanes.map((pane) => this.clonePane(pane));
   }
 
   release(sessionId: string): void {

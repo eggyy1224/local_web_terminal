@@ -156,4 +156,29 @@ describe("SessionStore", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("returns defensive pane copies from store", () => {
+    const store = new SessionStore();
+    const sessionId = "s_store_panes";
+    store.ensure(sessionId);
+
+    store.setLatestPanes(sessionId, [
+      {
+        id: "%1",
+        title: "pane-1",
+        cwd: "/tmp",
+        role: "workspace",
+        lines: ["line-1"],
+        errors: ["err-1"]
+      }
+    ]);
+
+    const panes = store.getLatestPanes(sessionId);
+    panes[0]?.lines.push("line-2");
+    panes[0]?.errors?.push("err-2");
+
+    const context = store.getContext(sessionId);
+    expect(context?.panes[0]?.lines).toEqual(["line-1"]);
+    expect(context?.panes[0]?.errors).toEqual(["err-1"]);
+  });
 });
