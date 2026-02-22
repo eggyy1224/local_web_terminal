@@ -52,14 +52,28 @@ export function App() {
     onResize: onTerminalResize
   });
 
+  const isSessionCurrent = useCallback((targetSessionId: string | null | undefined): targetSessionId is string => {
+    return Boolean(targetSessionId) && !disposedRef.current && sessionIdRef.current === targetSessionId;
+  }, []);
+
   const refreshContext = useCallback(async (sessionIdHint?: string) => {
     const targetSessionId = sessionIdHint ?? sessionIdRef.current;
-    if (!targetSessionId) {
+    if (!isSessionCurrent(targetSessionId)) {
       return false;
     }
 
     try {
       const context = await api<SessionContext>(`/api/context/${targetSessionId}`);
+      if (!isSessionCurrent(targetSessionId)) {
+        return false;
+      }
+      if (context.sessionId && context.sessionId !== targetSessionId) {
+        logWarn("context_refresh_session_mismatch", {
+          expectedSessionId: targetSessionId,
+          actualSessionId: context.sessionId
+        });
+        return false;
+      }
       const mergedContext = mergeIncomingContext(context);
       const syncedEnvContext = syncEnvContextFromSnapshot(
         { ...mergedContext, updatedAt: Date.now() },
@@ -77,7 +91,7 @@ export function App() {
       logWarn("context_refresh_failed", error);
       return false;
     }
-  }, []);
+  }, [isSessionCurrent]);
 
   const onStdout = useCallback(
     (data: string) => {
@@ -86,7 +100,17 @@ export function App() {
     [terminalRef]
   );
 
-  const onContextSnapshot = useCallback((snapshot: SessionContext, updatedAt: number) => {
+  const onContextSnapshot = useCallback((snapshot: SessionContext, updatedAt: number, targetSessionId: string) => {
+    if (!isSessionCurrent(targetSessionId)) {
+      return;
+    }
+    if (snapshot.sessionId && snapshot.sessionId !== targetSessionId) {
+      logWarn("context_snapshot_session_mismatch", {
+        expectedSessionId: targetSessionId,
+        actualSessionId: snapshot.sessionId
+      });
+      return;
+    }
     const mergedContext = mergeIncomingContext(snapshot);
     const syncedEnvContext = syncEnvContextFromSnapshot(
       { ...mergedContext, updatedAt },
@@ -99,9 +123,12 @@ export function App() {
       updatedAt,
       envContext: syncedEnvContext
     });
-  }, []);
+  }, [isSessionCurrent]);
 
-  const onEnvProbe = useCallback((incoming: EnvContext) => {
+  const onEnvProbe = useCallback((incoming: EnvContext, targetSessionId: string) => {
+    if (!isSessionCurrent(targetSessionId)) {
+      return;
+    }
     const current = latestEnvContextRef.current;
     if (!current || incoming.version >= current.version) {
       latestEnvContextRef.current = incoming;
@@ -111,7 +138,7 @@ export function App() {
         envContext: incoming
       });
     }
-  }, []);
+  }, [isSessionCurrent]);
 
   const handleBootstrapTimeout = useCallback(
     async (nextSessionId: string) => {
