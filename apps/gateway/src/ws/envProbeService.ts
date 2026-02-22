@@ -67,14 +67,21 @@ export function createEnvProbeService(options: EnvProbeServiceOptions): EnvProbe
       return;
     }
 
-    const baseProbeTarget = (await probeTargetPromise) ?? sessionId;
-    const candidateTargets = Array.from(new Set([baseProbeTarget, sessionId].map((item) => item.trim()).filter(Boolean)));
-
     const runAttempt = async (attempt: number): Promise<boolean> => {
       try {
         let raw: Awaited<ReturnType<TerminalAdapter["probeActiveEnvironment"]>> | null = null;
         let usedTarget = sessionId;
         let lastProbeError: unknown = null;
+        const baseProbeTarget = await probeTargetPromise.catch((error) => {
+          lastProbeError = error;
+          return null;
+        });
+        const candidateTargets = Array.from(
+          new Set([
+            ...(typeof baseProbeTarget === "string" && baseProbeTarget.trim().length > 0 ? [baseProbeTarget.trim()] : []),
+            sessionId
+          ])
+        );
 
         for (const target of candidateTargets) {
           try {
