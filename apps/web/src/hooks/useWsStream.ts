@@ -13,8 +13,8 @@ interface UseWsStreamOptions {
   contextBootstrapTimeoutMs: number;
   getDimensions: () => TerminalSize | null;
   onStdout: (data: string) => void;
-  onContextSnapshot: (snapshot: SessionContext, updatedAt: number) => void;
-  onEnvProbe: (env: EnvContext) => void;
+  onContextSnapshot: (snapshot: SessionContext, updatedAt: number, sessionId: string) => void;
+  onEnvProbe: (env: EnvContext, sessionId: string) => void;
   onBootstrapTimeout: (sessionId: string) => Promise<void> | void;
   disposedRef: MutableRefObject<boolean>;
 }
@@ -137,12 +137,12 @@ export function useWsStream(options: UseWsStreamOptions): UseWsStreamResult {
         if (parsed.type === "meta" && parsed.data.kind === "context_snapshot") {
           hasReceivedContextSnapshot = true;
           clearBootstrapTimer();
-          onContextSnapshot(parsed.data.snapshot, parsed.data.updatedAt);
+          onContextSnapshot(parsed.data.snapshot, parsed.data.updatedAt, targetSessionId);
           return;
         }
 
         if (parsed.type === "meta" && parsed.data.kind === "env_probe") {
-          onEnvProbe(parsed.data.env);
+          onEnvProbe(parsed.data.env, targetSessionId);
         }
       };
 

@@ -159,6 +159,15 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("sessionIdRef.current = null")).toBe(true);
   });
 
+  it("guards context writes with current session checks", () => {
+    const appSourcePath = path.resolve(process.cwd(), "src/App.tsx");
+    const source = fs.readFileSync(appSourcePath, "utf8");
+    expect(source.includes("const isSessionCurrent = useCallback")).toBe(true);
+    expect(source.includes("if (!isSessionCurrent(targetSessionId))")).toBe(true);
+    expect(source.includes("context_refresh_session_mismatch")).toBe(true);
+    expect(source.includes("context_snapshot_session_mismatch")).toBe(true);
+  });
+
   it("guards websocket parsing and reconnect with disposed/session checks", () => {
     const wsHookPath = path.resolve(process.cwd(), "src/hooks/useWsStream.ts");
     const source = fs.readFileSync(wsHookPath, "utf8");
@@ -166,6 +175,8 @@ describe("App snapshot sidecar", () => {
     expect(source.includes("ignored_invalid_ws_json")).toBe(true);
     expect(source.includes("disposedRef.current")).toBe(true);
     expect(source.includes("sessionId !== targetSessionId")).toBe(true);
+    expect(source.includes("onContextSnapshot(parsed.data.snapshot, parsed.data.updatedAt, targetSessionId)")).toBe(true);
+    expect(source.includes("onEnvProbe(parsed.data.env, targetSessionId)")).toBe(true);
   });
 
   it("uses unicode11 width handling for terminal rendering", () => {
