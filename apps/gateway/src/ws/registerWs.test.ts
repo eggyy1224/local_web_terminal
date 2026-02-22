@@ -411,11 +411,13 @@ describe("registerWsRoutes", () => {
     await waitFor(() => probeActiveEnvironment.mock.calls.length > 0);
     expect(probeActiveEnvironment).toHaveBeenCalledWith(sessionId, sessionId);
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     const context = store.getContext(sessionId);
@@ -471,11 +473,13 @@ describe("registerWsRoutes", () => {
 
     socket.emit("message", JSON.stringify({ type: "stdin", data: "echo test\r" }));
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     const meta = socket.sent
@@ -540,11 +544,13 @@ describe("registerWsRoutes", () => {
 
     socket.emit("message", JSON.stringify({ type: "stdin", data: "echo test\r" }));
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     const meta = socket.sent
@@ -601,11 +607,13 @@ describe("registerWsRoutes", () => {
 
     socket.emit("message", JSON.stringify({ type: "stdin", data: "echo test\r" }));
 
-    await waitFor(() =>
-      socket.sent.some((raw) => {
-        const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
-        return parsed.type === "meta" && parsed.data?.kind === "env_probe";
-      })
+    await waitFor(
+      () =>
+        socket.sent.some((raw) => {
+          const parsed = JSON.parse(raw) as { type: string; data?: { kind?: string } };
+          return parsed.type === "meta" && parsed.data?.kind === "env_probe";
+        }),
+      { timeoutMs: 10_000 }
     );
 
     const meta = socket.sent

@@ -78,11 +78,12 @@ export function createEnvProbeService(options: EnvProbeServiceOptions): EnvProbe
 
         for (const target of candidateTargets) {
           try {
-            raw = await adapter.probeActiveEnvironment(sessionId, target);
-            const hasTmuxIdentity = Boolean(raw.tmux.session || raw.tmux.window || raw.tmux.pane);
+            const candidateRaw = await adapter.probeActiveEnvironment(sessionId, target);
+            const hasTmuxIdentity = Boolean(candidateRaw.tmux.session || candidateRaw.tmux.window || candidateRaw.tmux.pane);
             if (!hasTmuxIdentity) {
               continue;
             }
+            raw = candidateRaw;
             usedTarget = target;
             break;
           } catch (error) {
